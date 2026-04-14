@@ -69,18 +69,47 @@ game-bot/
 └─────────────────────────────────────────────┘
 ```
 
-## 🚀 開發啟動
+## 📖 文件
+
+| 文件 | 說明 |
+|------|------|
+| [🚀 快速啟動指南](docs/getting-started.md) | 環境安裝、依賴設定、開發模式啟動、模擬器連接 |
+| [📦 編譯打包指南](docs/build-guide.md) | 各平台安裝檔打包、程式碼簽署、CI/CD |
+
+## 🚀 快速開始
+
+### 方式一：瀏覽器開發模式（推薦）
 
 ```bash
-# 1. 安裝前端依賴
-cd frontend && npm install
+# 終端 1 — Python API 伺服器
+cd game-bot
+source .venv/bin/activate
+python python-core/api_server.py
 
-# 2. 啟動 Tauri 開發模式（同時啟動 Vite + Rust）
-npm run tauri:dev
-
-# 3. 打包發佈
-npm run tauri:build
+# 終端 2 — 前端開發伺服器
+cd game-bot/frontend
+npm install    # 首次需要
+npm run dev
+# → 打開 http://localhost:5174
 ```
+
+### 方式二：Tauri 桌面應用
+
+```bash
+cd game-bot/frontend
+npm install    # 首次需要
+npm run tauri:dev
+```
+
+### 打包安裝檔
+
+```bash
+cd game-bot/frontend
+npm run tauri:build
+# 產出在 src-tauri/target/release/bundle/
+```
+
+> 📖 詳細說明請參考 [快速啟動指南](docs/getting-started.md) 和 [編譯打包指南](docs/build-guide.md)
 
 ## 🧩 核心功能
 
