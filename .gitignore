@@ -17,8 +17,19 @@ Thumbs.db
 # User specific data
 logs/
 assets/
+scripts/
 scripts.json
 
 # IDE
 .vscode/
 .idea/
+
+# Node / Frontend
+node_modules/
+frontend/dist/
+frontend/node_modules/
+
+# Rust / Tauri
+frontend/src-tauri/target/
+frontend/src-tauri/icons/*.png
+frontend/src-tauri/icons/*.ico
