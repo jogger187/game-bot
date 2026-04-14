@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>Game-Bot 控制台</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background-color: #0f172a; color: #e2e8f0; }
+        .canvas-container { position: relative; overflow: hidden; background: #1e293b; max-height: 70vh; display: flex; justify-content: center; }
+        canvas { max-width: 100%; object-fit: contain; cursor: crosshair; }
+        .modal { display: none; background: rgba(0,0,0,0.8); }
+        .modal.active { display: flex; }
+    </style>
+</head>
+<body class="h-screen flex overflow-hidden">
+    <!-- Sidebar -->
+    <aside class="w-64 bg-slate-900 border-r border-slate-700 flex flex-col">
+        <div class="p-6">
+            <h1 class="text-2xl font-bold text-indigo-400">Game-Bot</h1>
+            <p class="text-xs text-slate-400 mt-1">自動化控制中心</p>
+        </div>
+        <nav class="flex-1 px-4 space-y-2">
+            <button class="w-full text-left px-4 py-2 rounded font-medium transition tab-btn active bg-indigo-600 text-white" onclick="switchTab('objects', this)">🎯 物件識別</button>
+            <button class="w-full text-left px-4 py-2 rounded font-medium transition tab-btn text-slate-300 hover:bg-slate-800" onclick="switchTab('scripts', this)">📋 腳本編輯器</button>
+            <button class="w-full text-left px-4 py-2 rounded font-medium transition tab-btn text-slate-300 hover:bg-slate-800 opacity-50 cursor-not-allowed">▶️ 運行狀態 (開發中)</button>
+        </nav>
+        <div class="p-4 border-t border-slate-700 text-sm" id="statusPanel">
+            <div class="flex items-center gap-2">
+                <span id="statusDot" class="w-2 h-2 rounded-full bg-red-500"></span>
+                <span id="statusText">等待連線...</span>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="flex-1 flex flex-col overflow-hidden bg-slate-800">
+        <!-- Object Recognition Tab -->
+        <div id="tab-objects" class="tab-pane flex-1 overflow-y-auto p-8">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-2xl font-bold">識別物件庫</h2>
+                <button onclick="openCropModal()" class="bg-indigo-500 hover:bg-indigo-600 px-4 py-2 rounded text-white font-bold flex items-center gap-2 shadow-lg transition">
+                    + 從當前畫面擷取
+                </button>
+            </div>
+            
+            <div id="assetsGrid" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                <!-- Assets will be loaded here -->
+            </div>
+        </div>
+
+        <!-- Scripts Tab -->
+        <div id="tab-scripts" class="tab-pane flex-1 overflow-y-auto p-8 hidden">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-2xl font-bold">動態腳本列表</h2>
+                <button onclick="addNewScript()" class="bg-emerald-600 hover:bg-emerald-500 px-4 py-2 rounded text-white font-bold flex items-center gap-2 shadow-lg transition">
+                    + 新增腳本
+                </button>
+            </div>
+            <div class="bg-slate-900 border border-slate-700 rounded-lg p-6 min-h-[50vh]">
+                <div id="scriptsList" class="space-y-4">
+                    <!-- Scripts generated here -->
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Crop Modal -->
+    <div id="cropModal" class="modal fixed inset-0 z-50 items-center justify-center">
+        <div class="bg-slate-900 rounded-xl shadow-2xl flex flex-col w-[90vw] max-w-5xl h-[90vh]">
+            <div class="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800 rounded-t-xl">
+                <h3 class="font-bold text-lg">擷取新物件 (請在畫面上拖曳框選)</h3>
+                <button onclick="closeCropModal()" class="text-slate-400 hover:text-white">✕ 關閉</button>
+            </div>
+            
+            <div class="flex-1 canvas-container relative" id="canvasContainer">
+                <div id="loadingOverlay" class="absolute inset-0 bg-slate-900/80 flex items-center justify-center z-10">
+                    <span class="text-indigo-400 animate-pulse font-bold text-xl">📸 正在向手機截取超高畫質畫面...</span>
+                </div>
+                <!-- Interactive Canvas -->
+                <canvas id="cropCanvas"></canvas>
+            </div>
+
+            <div class="p-4 border-t border-slate-700 bg-slate-800 rounded-b-xl flex justify-between items-center">
+                <div class="text-sm text-slate-400" id="selectionInfo">尚無框選區域。</div>
+                <div class="flex gap-2">
+                    <input type="text" id="objectName" placeholder="輸入物件名稱 (如: ok_btn)" class="px-3 py-2 bg-slate-900 border border-slate-700 rounded text-white focus:outline-none focus:border-indigo-500">
+                    <button onclick="saveCrop()" class="bg-emerald-600 hover:bg-emerald-500 px-4 py-2 rounded text-white font-bold">💾 儲存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script>
+        let availableAssets = [];
+        let allScripts = [];
+
+        // Tab switching
+        function switchTab(tabId, btn) {
+            document.querySelectorAll('.tab-pane').forEach(el => el.classList.add('hidden'));
+            document.getElementById('tab-' + tabId).classList.remove('hidden');
+            
+            document.querySelectorAll('.tab-btn').forEach(el => {
+                el.classList.remove('bg-indigo-600', 'text-white');
+                if(!el.classList.contains('cursor-not-allowed')) el.classList.add('text-slate-300', 'hover:bg-slate-800');
+            });
+            btn.classList.add('bg-indigo-600', 'text-white');
+            btn.classList.remove('text-slate-300', 'hover:bg-slate-800');
+            
+            if (tabId === 'scripts') loadScripts();
+        }
+        
+        async function fetchStatus() {
+            try {
+                const res = await fetch('/api/status');
+                const data = await res.json();
+                const dot = document.getElementById('statusDot');
+                const txt = document.getElementById('statusText');
+                if (data.running) {
+                    dot.classList.replace('bg-red-500', 'bg-green-500');
+                    txt.textContent = '系統運行中';
+                }
+            } catch (e) {
+                document.getElementById('statusDot').classList.replace('bg-green-500', 'bg-red-500');
+                document.getElementById('statusText').textContent = '已斷線';
+            }
+        }
+        setInterval(fetchStatus, 5000);
+        fetchStatus();
+
+        // Assets Loading
+        async function loadAssets() {
+            const res = await fetch('/api/assets');
+            availableAssets = await res.json();
+            const grid = document.getElementById('assetsGrid');
+            grid.innerHTML = '';
+            
+            availableAssets.forEach(f => {
+                const url = `/assets-img/${f}?t=${Date.now()}`;
+                grid.innerHTML += `
+                    <div class="bg-slate-700 rounded-lg overflow-hidden border border-slate-600 shadow-md group relative flex flex-col">
+                        <div class="h-24 bg-slate-900 flex items-center justify-center p-2 relative custom-grid-bg">
+                            <img src="${url}" class="max-h-full max-w-full object-contain filter drop-shadow">
+                        </div>
+                        <div class="p-2 text-center text-xs text-slate-300 font-mono truncate border-t border-slate-800 bg-slate-800">
+                            ${f}
+                        </div>
+                    </div>
+                `;
+            });
+        }
+        loadAssets(); // init load
+
+        // --- Scripts Logic ---
+        function uuid() { return Math.random().toString(36).substring(2, 9); }
+
+        async function loadScripts() {
+            const res = await fetch('/api/scripts');
+            allScripts = await res.json();
+            renderScripts();
+        }
+
+        async function saveAllScripts() {
+            try {
+                await fetch('/api/scripts', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(allScripts)
+                });
+            } catch(e) { alert('儲存腳本失敗'); }
+        }
+
+        function toggleScript(id) {
+            const s = allScripts.find(x => x.id === id);
+            if (s) { s.enabled = !s.enabled; saveAllScripts().then(renderScripts); }
+        }
+
+        function deleteScript(id) {
+            if(confirm('確定刪除此腳本？')) {
+                allScripts = allScripts.filter(x => x.id !== id);
+                saveAllScripts().then(renderScripts);
+            }
+        }
+
+        function addNewScript() {
+            allScripts.push({
+                id: uuid(),
+                name: "新腳本",
+                enabled: false,
+                interval: 3.0,
+                rules: [
+                    { condition: { type: "image_match", target: availableAssets[0] || "" }, action: { type: "click_match" } }
+                ]
+            });
+            saveAllScripts().then(renderScripts);
+        }
+
+        function updateScriptName(id, val) {
+            const s = allScripts.find(x => x.id === id);
+            if (s) { s.name = val; saveAllScripts(); }
+        }
+
+        function renderScripts() {
+            const list = document.getElementById('scriptsList');
+            list.innerHTML = '';
+            if (allScripts.length === 0) {
+                list.innerHTML = '<div class="text-slate-500 text-center py-10">尚未建立任何腳本。點擊上方按鈕新增。</div>';
+                return;
+            }
+
+            allScripts.forEach((s, idx) => {
+                let rulesHtml = s.rules.map((r, rIdx) => {
+                    let options = availableAssets.map(a => `<option value="${a}" ${r.condition.target===a?'selected':''}>${a}</option>`).join('');
+                    return `
+                    <div class="flex items-center gap-3 bg-slate-700/50 p-2 rounded text-sm mt-2 border border-slate-700">
+                        <span class="text-indigo-400 font-bold">Rule ${rIdx+1}</span>
+                        <span class="text-slate-400">當畫面上出現：</span>
+                        <select onchange="updateRule(${idx}, ${rIdx}, 'target', this.value)" class="bg-slate-800 border border-slate-600 rounded px-2 py-1 text-white">
+                            <option value="">--請選擇圖片--</option>
+                            ${options}
+                        </select>
+                        <span class="text-slate-400">➡️ 動作：</span>
+                        <select onchange="updateRule(${idx}, ${rIdx}, 'action', this.value)" class="bg-slate-800 border border-slate-600 rounded px-2 py-1 text-white">
+                            <option value="click_match" ${r.action.type==='click_match'?'selected':''}>點擊該圖片</option>
+                            <option value="wait" ${r.action.type==='wait'?'selected':''}>什麼都不做只等待</option>
+                        </select>
+                        <button onclick="removeRule(${idx}, ${rIdx})" class="ml-auto text-red-400 hover:text-red-300 px-2 py-1 bg-red-900/30 rounded">刪除</button>
+                    </div>`;
+                }).join('');
+
+                const bgHeader = s.enabled ? 'bg-indigo-900 border-indigo-700' : 'bg-slate-800 border-slate-700';
+                
+                list.innerHTML += `
+                    <div class="border rounded-lg overflow-hidden ${bgHeader} transition">
+                        <div class="p-3 border-b border-slate-700/50 flex items-center justify-between">
+                            <div class="flex items-center gap-3">
+                                <!-- Toggle Switch -->
+                                <button onclick="toggleScript('${s.id}')" class="relative inline-flex items-center cursor-pointer">
+                                    <div class="w-11 h-6 rounded-full peer bg-slate-600 transition-colors ${s.enabled ? '!bg-emerald-500' : ''}"></div>
+                                    <div class="absolute w-5 h-5 bg-white rounded-full shadow inset-y-0.5 left-[2px] transition-transform ${s.enabled ? 'translate-x-full' : ''}"></div>
+                                </button>
+                                <input type="text" value="${s.name}" onchange="updateScriptName('${s.id}', this.value)" class="bg-transparent border-b border-dashed border-slate-500 text-lg font-bold text-white focus:outline-none focus:border-indigo-400 px-1">
+                                <span class="text-xs text-slate-400 ml-2">檢查頻率:</span>
+                                <input type="number" step="0.5" value="${s.interval}" onchange="updateScriptInterval('${s.id}', this.value)" class="w-16 bg-slate-800 border border-slate-600 rounded px-1 text-center text-sm text-white">
+                                <span class="text-xs text-slate-400">秒</span>
+                            </div>
+                            <button onclick="deleteScript('${s.id}')" class="text-slate-500 hover:text-red-400 transition">🗑️ 移除腳本</button>
+                        </div>
+                        <div class="p-4 bg-slate-800/50">
+                            ${rulesHtml}
+                            <button onclick="addRule(${idx})" class="mt-3 text-sm text-indigo-400 hover:text-indigo-300 border border-dashed border-indigo-500/50 rounded px-3 py-1 bg-indigo-500/10 transition w-full text-center">+ 新增一條規則 (If ... Then ...)</button>
+                        </div>
+                    </div>
+                `;
+            });
+        }
+
+        function updateScriptInterval(id, val) {
+            const s = allScripts.find(x => x.id === id);
+            if(s) { s.interval = parseFloat(val); saveAllScripts(); }
+        }
+
+        function addRule(sIdx) {
+            allScripts[sIdx].rules.push({
+                condition: { type: "image_match", target: availableAssets[0] || "" },
+                action: { type: "click_match" }
+            });
+            saveAllScripts().then(renderScripts);
+        }
+
+        function removeRule(sIdx, rIdx) {
+            allScripts[sIdx].rules.splice(rIdx, 1);
+            saveAllScripts().then(renderScripts);
+        }
+
+        function updateRule(sIdx, rIdx, field, val) {
+            if (field === 'target') allScripts[sIdx].rules[rIdx].condition.target = val;
+            if (field === 'action') allScripts[sIdx].rules[rIdx].action.type = val;
+            saveAllScripts();
+        }
+
+        // --- Crop Logic ---
+        const cropModal = document.getElementById('cropModal');
+        const canvas = document.getElementById('cropCanvas');
+        const ctx = canvas.getContext('2d');
+        const loadingOverlay = document.getElementById('loadingOverlay');
+        
+        let img = new Image();
+        let isDrawing = false;
+        let startX = 0, startY = 0;
+        let rect = { x: 0, y: 0, w: 0, h: 0 };
+        let imageScale = 1;
+
+        async function openCropModal() {
+            cropModal.classList.add('active');
+            loadingOverlay.classList.remove('hidden');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            rect = { w: 0, h: 0 };
+            document.getElementById('selectionInfo').textContent = "請在畫面上拖曳框選物件。";
+            
+            try {
+                const res = await fetch('/api/screenshot/highres');
+                const data = await res.json();
+                
+                img.onload = () => {
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    
+                    // calculate scale factor of canvas vs actual display
+                    const containerRect = document.getElementById('canvasContainer').getBoundingClientRect();
+                    
+                    ctx.drawImage(img, 0, 0);
+                    loadingOverlay.classList.add('hidden');
+                };
+                img.src = 'data:image/jpeg;base64,' + data.image;
+            } catch(e) {
+                alert("無法取得截圖: " + e);
+                closeCropModal();
+            }
+        }
+
+        function closeCropModal() {
+            cropModal.classList.remove('active');
+            document.getElementById('objectName').value = '';
+        }
+
+        // Mouse Events
+        canvas.addEventListener('mousedown', e => {
+            isDrawing = true;
+            const r = canvas.getBoundingClientRect();
+            // Map screen coordinates to real image coordinates
+            const scaleX = canvas.width / r.width;
+            const scaleY = canvas.height / r.height;
+            startX = (e.clientX - r.left) * scaleX;
+            startY = (e.clientY - r.top) * scaleY;
+        });
+
+        canvas.addEventListener('mousemove', e => {
+            if (!isDrawing) return;
+            const r = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / r.width;
+            const scaleY = canvas.height / r.height;
+            const currentX = (e.clientX - r.left) * scaleX;
+            const currentY = (e.clientY - r.top) * scaleY;
+
+            rect.x = Math.min(startX, currentX);
+            rect.y = Math.min(startY, currentY);
+            rect.w = Math.abs(currentX - startX);
+            rect.h = Math.abs(currentY - startY);
+
+            // Redraw image and rect
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(img, 0, 0);
+            
+            // Draw dark overlay
+            ctx.fillStyle = 'rgba(0,0,0,0.5)';
+            ctx.beginPath();
+            ctx.moveTo(0,0); ctx.lineTo(canvas.width,0); ctx.lineTo(canvas.width,canvas.height); ctx.lineTo(0,canvas.height); ctx.lineTo(0,0);
+            // Hole
+            ctx.moveTo(rect.x, rect.y); ctx.lineTo(rect.x, rect.y+rect.h); ctx.lineTo(rect.x+rect.w, rect.y+rect.h); ctx.lineTo(rect.x+rect.w, rect.y); ctx.lineTo(rect.x, rect.y);
+            ctx.fill('evenodd');
+
+            // Draw border
+            ctx.strokeStyle = '#22c55e';
+            ctx.lineWidth = Math.max(2, canvas.width/500); // scale line width
+            ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+        });
+
+        canvas.addEventListener('mouseup', () => {
+            isDrawing = false;
+            if(rect.w > 5 && rect.h > 5) {
+                document.getElementById('selectionInfo').textContent = `已框選：大小 ${Math.round(rect.w)} x ${Math.round(rect.h)} px`;
+                document.getElementById('objectName').focus();
+            } else {
+                rect = { w: 0, h: 0 };
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(img, 0, 0);
+            }
+        });
+
+        async function saveCrop() {
+            if (rect.w < 5 || rect.h < 5) return alert('請先框選有效的區域');
+            let name = document.getElementById('objectName').value.trim();
+            if (!name) return alert('請輸入物件名稱');
+            if (!name.endsWith('.png')) name += '.png';
+
+            // Create off-screen canvas to crop real image size
+            const cropCnv = document.createElement('canvas');
+            cropCnv.width = rect.w;
+            cropCnv.height = rect.h;
+            const cCtx = cropCnv.getContext('2d');
+            cCtx.drawImage(
+                img, 
+                rect.x, rect.y, rect.w, rect.h, // Source
+                0, 0, rect.w, rect.h            // Destination
+            );
+
+            const base64Data = cropCnv.toDataURL('image/png');
+
+            try {
+                const response = await fetch('/api/assets/crop', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: name, image_b64: base64Data })
+                });
+                
+                const result = await response.json();
+                if (response.ok) {
+                    alert('✅ 已儲存: ' + name);
+                    loadAssets();
+                    closeCropModal();
+                } else {
+                    alert('儲存失敗: ' + result.error);
+                }
+            } catch (e) {
+                alert('網路錯誤: ' + e);
+            }
+        }
+    </script>
+    <style>
+        .custom-grid-bg { 
+            background-image: linear-gradient(45deg, #1e293b 25%, transparent 25%, transparent 75%, #1e293b 75%, #1e293b), 
+                              linear-gradient(45deg, #1e293b 25%, transparent 25%, transparent 75%, #1e293b 75%, #1e293b);
+            background-color: #334155;
+            background-size: 10px 10px;
+            background-position: 0 0, 5px 5px;
+        }
+    </style>
+</body>
+</html>

@@ -1,0 +1,95 @@
+# ══════════════════════════════════════════════════════════
+# Game-Bot 設定檔
+# ══════════════════════════════════════════════════════════
+
+# 設備設定
+device:
+  mode: "adb"              # adb | minicap | emulator
+  serial: "127.0.0.1:5555" # BlueStacks
+  emulator:
+    type: "auto"           # auto | mumu | ldplayer | bluestacks | nox | memu
+    install_path: null     # 自動偵測
+    index: 0               # 多開索引 (0-based)
+  minicap:
+    quality: 80            # JPEG 品質 (1-100)
+    max_fps: 10            # 最大幀率
+
+# 截圖設定
+screenshot:
+  save_debug: true         # 是否儲存 debug 截圖
+  debug_dir: "./logs/screenshots"
+
+# 模板比對設定
+matcher:
+  default_threshold: 0.85  # 比對信心門檻 (0~1)
+  multi_scale: true        # 多尺度比對
+  scale_range: [0.8, 1.2]  # 多尺度搜尋範圍
+  scale_steps: 5           # 多尺度步數
+  grayscale: false         # 灰階比對模式
+
+# 特徵點匹配設定
+feature_matcher:
+  method: "orb"            # orb | sift
+  min_matches: 10          # 最少匹配特徵點數
+  good_ratio: 0.75         # Lowe's ratio test 閾值
+
+# 輸入模擬設定
+input:
+  tap_offset_range: 10     # 點擊隨機偏移 px
+  tap_delay_min: 0.05      # 點擊後最小延遲 (秒)
+  tap_delay_max: 0.15      # 點擊後最大延遲 (秒)
+  action_delay_min: 0.8    # 操作間最小延遲 (秒)
+  action_delay_max: 1.5    # 操作間最大延遲 (秒)
+  use_bezier: true         # 使用 Bezier 曲線滑動
+  rhythm: "casual"         # casual | focused | random
+
+# 防偵測設定
+anti_detect:
+  enabled: true
+  afk_chance: 0.05         # 每次操作後 AFK 的機率
+  afk_duration: [2.0, 8.0] # AFK 持續時間範圍
+  fatigue_enabled: true    # 操作速度隨時間遞減
+  fake_actions: true       # 偶爾做無意義操作
+
+# OCR 設定
+ocr:
+  lang: "ch"               # ch=中文, en=英文
+  use_gpu: false
+  digit_mode: false        # 數字專用模式
+  preprocess:              # 預處理 pipeline
+    grayscale: true
+    threshold: null        # null=不做二值化，或 0-255
+    scale: 1.0             # 放大倍率
+
+# 場景偵測設定
+scenes:
+  config_dir: "./scenes"   # 場景定義 YAML 目錄
+
+# 任務排程設定
+scheduler:
+  enabled: false
+  tasks: []
+  # tasks:
+  #   - name: "daily_quest"
+  #     cron: "0 8 * * *"     # 每天 08:00
+  #   - name: "arena_battle"
+  #     interval: 7200        # 每 2 小時
+
+# 日誌設定
+logging:
+  level: "DEBUG"
+  file: "./logs/bot.log"
+  rotation: "10 MB"
+
+# 除錯 Web UI
+debug:
+  web_ui: true
+  web_port: 8765
+  save_screenshots: true
+  annotate_matches: true   # 截圖上標註比對結果
+
+# 統計追蹤
+stats:
+  enabled: true
+  export_interval: 300     # 每 5 分鐘匯出一次
+  export_path: "./logs/stats.json"
