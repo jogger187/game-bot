@@ -74,36 +74,28 @@ export const screenshotHighres = async () => {
 // ═══════════════════════════════════════════
 export const scriptList = async (): Promise<Script[]> => {
   if (isTauri()) return tauriInvoke<Script[]>('script_list');
-  // 瀏覽器開發模式暫時返回空列表（腳本管理較複雜，之後再接 API）
-  return [];
+  return apiCall<Script[]>('/scripts');
 };
 
 export const scriptCreate = async (name: string): Promise<Script> => {
   if (isTauri()) return tauriInvoke<Script>('script_create', { name });
-  const script: Script = {
-    id: `dev_${Date.now()}`,
-    name,
-    version: 1,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    nodes: [
-      { id: 'start_1', type: 'start', position: { x: 100, y: 200 }, data: {} },
-      { id: 'end_1', type: 'end', position: { x: 600, y: 200 }, data: {} },
-    ],
-    edges: [],
-    settings: { loop_enabled: true, interval: 3, max_runs: 0 },
-    rules: [],
-  };
-  return script;
+  return apiCall<Script>('/scripts', {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  });
 };
 
 export const scriptSave = async (script: Script): Promise<Script> => {
   if (isTauri()) return tauriInvoke<Script>('script_save', { script });
-  return { ...script, version: script.version + 1, updated_at: new Date().toISOString() };
+  return apiCall<Script>('/scripts', {
+    method: 'PUT',
+    body: JSON.stringify(script),
+  });
 };
 
 export const scriptDelete = async (scriptId: string): Promise<void> => {
   if (isTauri()) return tauriInvoke<void>('script_delete', { scriptId });
+  await apiCall(`/scripts/${encodeURIComponent(scriptId)}`, { method: 'DELETE' });
 };
 
 // ═══════════════════════════════════════════

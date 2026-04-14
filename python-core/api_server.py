@@ -248,6 +248,82 @@ async def asset_read(request):
 
 
 # ═══════════════════════════════════════════
+#  腳本 API
+# ═══════════════════════════════════════════
+async def script_list(request):
+    """列出所有腳本"""
+    scripts = []
+    if SCRIPTS_DIR.exists():
+        for f in sorted(SCRIPTS_DIR.iterdir()):
+            if f.suffix == ".json":
+                try:
+                    data = json.loads(f.read_text("utf-8"))
+                    scripts.append(data)
+                except (json.JSONDecodeError, OSError):
+                    pass
+    return web.json_response(scripts)
+
+
+async def script_create(request):
+    """建立新腳本"""
+    data = await request.json()
+    name = data.get("name", "新腳本")
+    from datetime import datetime
+    import uuid
+
+    now = datetime.utcnow().isoformat() + "Z"
+    script_id = str(uuid.uuid4())
+
+    script = {
+        "id": script_id,
+        "name": name,
+        "version": 1,
+        "created_at": now,
+        "updated_at": now,
+        "nodes": [
+            {"id": "start_1", "type": "start", "position": {"x": 100, "y": 200}, "data": {}},
+            {"id": "end_1", "type": "end", "position": {"x": 600, "y": 200}, "data": {}},
+        ],
+        "edges": [],
+        "settings": {"loop_enabled": True, "interval": 3, "max_runs": 0},
+        "rules": [],
+    }
+
+    filepath = SCRIPTS_DIR / f"{script_id}.json"
+    filepath.write_text(json.dumps(script, ensure_ascii=False, indent=2), encoding="utf-8")
+    add_log(f"📝 已建立腳本: {name} ({script_id})")
+    return web.json_response(script)
+
+
+async def script_save(request):
+    """儲存腳本"""
+    script = await request.json()
+    script_id = script.get("id", "")
+
+    if not script_id:
+        return web.json_response({"error": "缺少 script id"}, status=400)
+
+    from datetime import datetime
+    script["updated_at"] = datetime.utcnow().isoformat() + "Z"
+    script["version"] = script.get("version", 0) + 1
+
+    filepath = SCRIPTS_DIR / f"{script_id}.json"
+    filepath.write_text(json.dumps(script, ensure_ascii=False, indent=2), encoding="utf-8")
+    add_log(f"💾 已儲存腳本: {script.get('name', '')} (v{script['version']})")
+    return web.json_response(script)
+
+
+async def script_delete(request):
+    """刪除腳本"""
+    script_id = request.match_info["script_id"]
+    filepath = SCRIPTS_DIR / f"{script_id}.json"
+    if filepath.exists():
+        filepath.unlink()
+        add_log(f"🗑️ 已刪除腳本: {script_id}")
+    return web.json_response({"ok": True})
+
+
+# ═══════════════════════════════════════════
 #  日誌 API
 # ═══════════════════════════════════════════
 async def get_logs(request):
@@ -276,6 +352,12 @@ def create_app():
     app.router.add_post("/api/assets", asset_save)
     app.router.add_delete("/api/assets/{name}", asset_delete)
     app.router.add_get("/api/assets/{name}/read", asset_read)
+
+    # 腳本
+    app.router.add_get("/api/scripts", script_list)
+    app.router.add_post("/api/scripts", script_create)
+    app.router.add_put("/api/scripts", script_save)
+    app.router.add_delete("/api/scripts/{script_id}", script_delete)
 
     # 日誌
     app.router.add_get("/api/logs", get_logs)
