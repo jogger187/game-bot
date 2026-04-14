@@ -1,22 +1,75 @@
-// 儀表板頁面 — 裝置狀態總覽
-import { useEffect } from 'react';
+// 儀表板頁面 — 裝置狀態總覽 + 裝置選擇器
+import { useEffect, useState, useCallback } from 'react';
 import {
   Box, Paper, Typography, Button, Grid, Card, CardContent, Chip,
+  Dialog, DialogTitle, DialogContent, List, ListItemButton, ListItemText,
+  ListItemIcon, CircularProgress,
 } from '@mui/material';
 import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
 import PlayCircleIcon from '@mui/icons-material/PlayCircle';
 import DescriptionIcon from '@mui/icons-material/Description';
 import ImageIcon from '@mui/icons-material/Image';
+import ComputerIcon from '@mui/icons-material/Computer';
+import SmartphoneIcon from '@mui/icons-material/Smartphone';
+import RefreshIcon from '@mui/icons-material/Refresh';
 import { useAppStore } from '../stores/appStore';
+import * as api from '../utils/tauri';
+
+interface AdbDevice {
+  serial: string;
+  status: string;
+}
 
 const Dashboard = () => {
   const { device, scripts, assets, tasks, logs, connectDevice, disconnectDevice, fetchDevice } = useAppStore();
 
-  useEffect(() => {
-    fetchDevice();
-  }, [fetchDevice]);
+  // 裝置選擇對話框
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [devicesList, setDevicesList] = useState<AdbDevice[]>([]);
+  const [loadingDevices, setLoadingDevices] = useState(false);
+
+  useEffect(() => { fetchDevice(); }, [fetchDevice]);
 
   const runningTasks = tasks.filter((t) => t.enabled && !t.completed).length;
+
+  // 載入裝置列表
+  const loadDevices = useCallback(async () => {
+    setLoadingDevices(true);
+    try {
+      const result = await api.deviceList();
+      setDevicesList(result.devices.filter((d) => d.status === 'device'));
+    } catch {
+      setDevicesList([]);
+    } finally {
+      setLoadingDevices(false);
+    }
+  }, []);
+
+  // 開啟裝置選擇器
+  const openPicker = () => {
+    setPickerOpen(true);
+    loadDevices();
+  };
+
+  // 選擇裝置並連線
+  const selectDevice = async (serial: string) => {
+    setPickerOpen(false);
+    await connectDevice(serial);
+  };
+
+  // 判斷裝置類型圖標
+  const getDeviceIcon = (serial: string) => {
+    if (serial.includes('emulator') || serial.includes('127.0.0.1') || serial.includes(':'))
+      return <ComputerIcon sx={{ color: '#6366f1' }} />;
+    return <SmartphoneIcon sx={{ color: '#10b981' }} />;
+  };
+
+  // 判斷裝置描述
+  const getDeviceLabel = (serial: string) => {
+    if (serial.includes('emulator')) return '模擬器 (BlueStacks/Nox)';
+    if (serial.includes('127.0.0.1') || serial.match(/:\d+$/)) return '模擬器 (TCP)';
+    return '實體手機 (USB)';
+  };
 
   return (
     <Box sx={{ p: 4, overflow: 'auto', height: '100%' }}>
@@ -57,7 +110,7 @@ const Dashboard = () => {
               <Button variant="outlined" color="error" onClick={disconnectDevice}>斷開連線</Button>
             </>
           ) : (
-            <Button variant="contained" onClick={() => connectDevice()}>連接裝置</Button>
+            <Button variant="contained" onClick={openPicker}>選擇裝置連線</Button>
           )}
         </Box>
       </Paper>
@@ -82,6 +135,51 @@ const Dashboard = () => {
           )}
         </Box>
       </Paper>
+
+      {/* 裝置選擇對話框 */}
+      <Dialog open={pickerOpen} onClose={() => setPickerOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          選擇要連接的裝置
+          <Button size="small" startIcon={<RefreshIcon />} onClick={loadDevices} disabled={loadingDevices}>
+            重新掃描
+          </Button>
+        </DialogTitle>
+        <DialogContent>
+          {loadingDevices ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+              <CircularProgress />
+            </Box>
+          ) : devicesList.length === 0 ? (
+            <Box sx={{ textAlign: 'center', p: 4 }}>
+              <Typography color="text.secondary">找不到可用裝置</Typography>
+              <Typography variant="caption" color="text.secondary">
+                請確認模擬器已啟動或手機已透過 USB 連接
+              </Typography>
+            </Box>
+          ) : (
+            <List>
+              {devicesList.map((d) => (
+                <ListItemButton
+                  key={d.serial}
+                  onClick={() => selectDevice(d.serial)}
+                  sx={{
+                    border: '1px solid', borderColor: 'divider', borderRadius: 1, mb: 1,
+                    '&:hover': { borderColor: 'primary.main', bgcolor: 'rgba(99,102,241,0.08)' },
+                  }}
+                >
+                  <ListItemIcon>{getDeviceIcon(d.serial)}</ListItemIcon>
+                  <ListItemText
+                    primary={d.serial}
+                    secondary={getDeviceLabel(d.serial)}
+                    slotProps={{ primary: { sx: { fontFamily: 'monospace', fontWeight: 'bold' } } }}
+                  />
+                  <Chip label={d.status} size="small" color="success" variant="outlined" />
+                </ListItemButton>
+              ))}
+            </List>
+          )}
+        </DialogContent>
+      </Dialog>
     </Box>
   );
 };
