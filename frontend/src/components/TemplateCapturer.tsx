@@ -20,7 +20,7 @@ interface CropRect {
 }
 
 const TemplateCapturer = () => {
-  const { device, addLog, fetchAssets } = useAppStore();
+  const { device, addLog, fetchAssets, connectDevice } = useAppStore();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -260,10 +260,14 @@ const TemplateCapturer = () => {
           variant="contained"
           startIcon={<CameraAltIcon />}
           onClick={captureScreenshot}
-          disabled={loading}
+          disabled={loading || !device?.connected}
         >
           {loading ? '擷取中...' : '擷取截圖'}
         </Button>
+
+        {!device?.connected && (
+          <Typography variant="caption" color="warning.main">需先連接裝置</Typography>
+        )}
 
         {screenshotSrc && (
           <Button
@@ -296,8 +300,14 @@ const TemplateCapturer = () => {
           </>
         )}
 
-        {!device?.connected && (
-          <Chip label="Mock 模式" size="small" color="warning" variant="outlined" sx={{ ml: 'auto' }} />
+        {device?.connected && (
+          <Chip
+            label={`已連線: ${device.serial}`}
+            size="small"
+            color="success"
+            variant="outlined"
+            sx={{ ml: 'auto' }}
+          />
         )}
       </Paper>
 
@@ -322,16 +332,31 @@ const TemplateCapturer = () => {
             onMouseUp={handleMouseUp}
             onMouseLeave={handleMouseUp}
             style={{
-              cursor: isDrawing ? 'crosshair' : 'crosshair',
+              cursor: 'crosshair',
               border: '1px solid #334155',
               borderRadius: 4,
             }}
           />
+        ) : !device?.connected ? (
+          /* 未連線提示 */
+          <Box sx={{ textAlign: 'center' }}>
+            <Box sx={{ fontSize: 64, mb: 2 }}>📱</Box>
+            <Typography color="text.secondary" variant="h6" sx={{ mb: 1 }}>
+              請先連接裝置
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+              需要連線到模擬器或手機才能擷取遊戲畫面
+            </Typography>
+            <Button variant="contained" onClick={() => connectDevice()}>
+              連接裝置
+            </Button>
+          </Box>
         ) : (
+          /* 已連線但尚未截圖 */
           <Box sx={{ textAlign: 'center' }}>
             <CameraAltIcon sx={{ fontSize: 80, color: '#334155', mb: 2 }} />
             <Typography color="text.secondary" sx={{ mb: 1 }}>
-              點擊「擷取截圖」取得裝置畫面
+              裝置已連線，點擊「擷取截圖」取得裝置畫面
             </Typography>
             <Typography variant="caption" color="text.secondary">
               然後在截圖上拖拽框選要識別的物件區域
