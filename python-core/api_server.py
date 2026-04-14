@@ -324,6 +324,111 @@ async def script_delete(request):
 
 
 # ═══════════════════════════════════════════
+#  任務執行 API
+# ═══════════════════════════════════════════
+import threading
+from script_runner import ScriptRunner
+
+# 活躍任務 { job_id: { runner, thread, info } }
+active_tasks = {}
+
+
+async def task_start(request):
+    """啟動一個腳本任務"""
+    data = await request.json()
+    script_id = data.get("script_id", "")
+    run_mode = data.get("run_mode", "loop")
+    max_runs = data.get("max_runs", 0)
+
+    if not state["connected"]:
+        return web.json_response({"error": "裝置未連線"}, status=400)
+
+    # 讀取腳本
+    script_path = SCRIPTS_DIR / f"{script_id}.json"
+    if not script_path.exists():
+        return web.json_response({"error": f"腳本不存在: {script_id}"}, status=404)
+
+    script = json.loads(script_path.read_text("utf-8"))
+
+    # 覆蓋執行設定
+    if run_mode == "fixed":
+        script["settings"]["loop_enabled"] = True
+        script["settings"]["max_runs"] = max_runs
+    elif run_mode == "loop":
+        script["settings"]["loop_enabled"] = True
+        script["settings"]["max_runs"] = 0
+    else:
+        script["settings"]["loop_enabled"] = False
+
+    import uuid
+    job_id = str(uuid.uuid4())[:8]
+
+    # 建立 runner
+    runner = ScriptRunner(serial=state["serial"], on_log=add_log)
+
+    task_info = {
+        "job_id": job_id,
+        "script_id": script_id,
+        "script_name": script.get("name", ""),
+        "enabled": True,
+        "completed": False,
+        "run_count": 0,
+        "max_runs": max_runs,
+        "run_mode": run_mode,
+    }
+
+    def run_in_thread():
+        try:
+            runner.run(script)
+        finally:
+            task_info["completed"] = True
+            task_info["enabled"] = False
+            task_info["run_count"] = runner.run_count
+
+    t = threading.Thread(target=run_in_thread, daemon=True)
+    t.start()
+
+    active_tasks[job_id] = {"runner": runner, "thread": t, "info": task_info}
+    add_log(f"🚀 任務已啟動: {script.get('name', '')} (job={job_id})")
+    return web.json_response(task_info)
+
+
+async def task_list(request):
+    """列出所有任務"""
+    # 更新任務狀態
+    for jid, task in active_tasks.items():
+        runner = task["runner"]
+        task["info"]["run_count"] = runner.run_count
+        task["info"]["enabled"] = runner.running and not runner.paused
+        task["info"]["completed"] = not runner.running
+    return web.json_response([t["info"] for t in active_tasks.values()])
+
+
+async def task_toggle(request):
+    """暫停/繼續任務"""
+    job_id = request.match_info["job_id"]
+    task = active_tasks.get(job_id)
+    if not task:
+        return web.json_response({"error": "任務不存在"}, status=404)
+    task["runner"].toggle_pause()
+    task["info"]["enabled"] = not task["runner"].paused
+    return web.json_response(task["info"])
+
+
+async def task_stop(request):
+    """停止任務"""
+    job_id = request.match_info["job_id"]
+    task = active_tasks.get(job_id)
+    if not task:
+        return web.json_response({"error": "任務不存在"}, status=404)
+    task["runner"].stop()
+    task["info"]["enabled"] = False
+    task["info"]["completed"] = True
+    add_log(f"🛑 任務已停止: {task['info']['script_name']} (job={job_id})")
+    return web.json_response({"ok": True})
+
+
+# ═══════════════════════════════════════════
 #  日誌 API
 # ═══════════════════════════════════════════
 async def get_logs(request):
@@ -358,6 +463,12 @@ def create_app():
     app.router.add_post("/api/scripts", script_create)
     app.router.add_put("/api/scripts", script_save)
     app.router.add_delete("/api/scripts/{script_id}", script_delete)
+
+    # 任務
+    app.router.add_post("/api/tasks", task_start)
+    app.router.add_get("/api/tasks", task_list)
+    app.router.add_post("/api/tasks/{job_id}/toggle", task_toggle)
+    app.router.add_delete("/api/tasks/{job_id}", task_stop)
 
     # 日誌
     app.router.add_get("/api/logs", get_logs)

@@ -108,30 +108,25 @@ export const taskStart = async (params: {
   max_runs: number;
 }): Promise<TaskInfo> => {
   if (isTauri()) return tauriInvoke<TaskInfo>('task_start', { params });
-  return {
-    job_id: `job_${Date.now()}`,
-    script_id: params.script_id,
-    script_name: params.script_name,
-    enabled: true,
-    completed: false,
-    run_count: 0,
-    max_runs: params.max_runs,
-    run_mode: params.run_mode,
-  };
+  return apiCall<TaskInfo>('/tasks', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  });
 };
 
 export const taskToggle = async (jobId: string): Promise<TaskInfo> => {
   if (isTauri()) return tauriInvoke<TaskInfo>('task_toggle', { jobId });
-  throw new Error('Task toggle not available in browser mode');
+  return apiCall<TaskInfo>(`/tasks/${encodeURIComponent(jobId)}/toggle`, { method: 'POST' });
 };
 
 export const taskStop = async (jobId: string): Promise<void> => {
   if (isTauri()) return tauriInvoke<void>('task_stop', { jobId });
+  await apiCall(`/tasks/${encodeURIComponent(jobId)}`, { method: 'DELETE' });
 };
 
 export const taskList = async (): Promise<TaskInfo[]> => {
   if (isTauri()) return tauriInvoke<TaskInfo[]>('task_list');
-  return [];
+  return apiCall<TaskInfo[]>('/tasks');
 };
 
 export const getLogs = async (limit?: number): Promise<string[]> => {
