@@ -31,7 +31,7 @@ interface AppStore {
   // 任務
   tasks: TaskInfo[];
   fetchTasks: () => Promise<void>;
-  startTask: (scriptId: string, scriptName: string, runMode: string, maxRuns: number, loopInterval?: number) => Promise<void>;
+  startTask: (scriptId: string, scriptName: string, runMode: string, maxRuns: number, loopInterval?: number, scheduledTimes?: string[]) => Promise<void>;
   toggleTask: (jobId: string) => Promise<void>;
   stopTask: (jobId: string) => Promise<void>;
   removeTask: (jobId: string) => Promise<void>;
@@ -131,13 +131,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
       set({ tasks: [] });
     }
   },
-  startTask: async (scriptId, scriptName, runMode, maxRuns, loopInterval = 3) => {
+  startTask: async (scriptId, scriptName, runMode, maxRuns, loopInterval = 3, scheduledTimes = []) => {
     const task = await api.taskStart({
       script_id: scriptId,
       script_name: scriptName,
       run_mode: runMode,
       max_runs: maxRuns,
       loop_interval: loopInterval,
+      scheduled_times: scheduledTimes,
     });
     set((s) => ({ tasks: [...s.tasks, task] }));
     get().addLog(`🚀 已啟動任務: ${scriptName}`);

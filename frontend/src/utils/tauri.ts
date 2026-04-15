@@ -107,6 +107,7 @@ export const taskStart = async (params: {
   run_mode: string;
   max_runs: number;
   loop_interval?: number;
+  scheduled_times?: string[];
 }): Promise<TaskInfo> => {
   if (isTauri()) return tauriInvoke<TaskInfo>('task_start', { params });
   return apiCall<TaskInfo>('/tasks', {

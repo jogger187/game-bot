@@ -330,7 +330,8 @@ async def api_task_start(request):
     script_name = data.get("script_name", "")
     run_mode = data.get("run_mode", "loop")
     max_runs = data.get("max_runs", 0)
-    loop_interval = data.get("loop_interval", 3)  # 獲取循環間隔參數，默認 3 秒
+    loop_interval = data.get("loop_interval", 3)
+    scheduled_times = data.get("scheduled_times", [])  # 每日定時觸發的時間點列表
 
     if not device_state["connected"]:
         return web.json_response({"error": "裝置未連線"}, status=400)
@@ -342,7 +343,12 @@ async def api_task_start(request):
 
     # 覆蓋執行設定
     settings = script.get("settings", {})
-    if run_mode == "fixed":
+    if run_mode == "scheduled":
+        # 每日定時模式：使用定時觸發，每次執行一次
+        settings["loop_enabled"] = False
+        settings["max_runs"] = 0
+        settings["scheduled_times"] = scheduled_times
+    elif run_mode == "fixed":
         settings["loop_enabled"] = True
         settings["max_runs"] = max_runs
     elif run_mode == "loop":
@@ -350,31 +356,37 @@ async def api_task_start(request):
         settings["max_runs"] = 0
     else:
         settings["loop_enabled"] = False
-    settings["interval"] = loop_interval  # 設定循環間隔
+    settings["interval"] = loop_interval
     script["settings"] = settings
 
     # 建立任務記錄到 DB
     task_info = db.task_create(conn, script_id, script_name or script["name"], run_mode, max_runs)
     job_id = task_info["job_id"]
 
-    # 建立 runner
-    runner = ScriptRunner(serial=device_state["serial"], on_log=lambda msg: add_log(msg, source="task", job_id=job_id))
+    if run_mode == "scheduled":
+        # 定時模式：使用調度器管理
+        add_log(f"⏰ 定時任務已建立: {script['name']} (job={job_id}), 觸發時間: {', '.join(scheduled_times)}", source="task", job_id=job_id)
+        # TODO: 實作定時調度器
+        # 目前先存儲設定，後續可以實作調度器來定時執行
+        return web.json_response(task_info)
+    else:
+        # 循環/固定次數模式：直接啟動執行緒
+        runner = ScriptRunner(serial=device_state["serial"], on_log=lambda msg: add_log(msg, source="task", job_id=job_id))
 
-    def run_in_thread():
-        try:
-            runner.run(script)
-        finally:
-            # 任務結束時更新次數並標記為已完成（暫停狀態）
-            db.task_update_count(conn, job_id, runner.run_count)
-            db.task_complete(conn, job_id)
-            active_runners.pop(job_id, None)
+        def run_in_thread():
+            try:
+                runner.run(script)
+            finally:
+                db.task_update_count(conn, job_id, runner.run_count)
+                db.task_complete(conn, job_id)
+                active_runners.pop(job_id, None)
 
-    t = threading.Thread(target=run_in_thread, daemon=True)
-    t.start()
+        t = threading.Thread(target=run_in_thread, daemon=True)
+        t.start()
 
-    active_runners[job_id] = {"runner": runner, "thread": t}
-    add_log(f"🚀 任務已啟動: {script['name']} (job={job_id})", source="task", job_id=job_id)
-    return web.json_response(task_info)
+        active_runners[job_id] = {"runner": runner, "thread": t}
+        add_log(f"🚀 任務已啟動: {script['name']} (job={job_id})", source="task", job_id=job_id)
+        return web.json_response(task_info)
 
 
 async def api_task_list(request):
