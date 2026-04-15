@@ -10,7 +10,6 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "title": "Game Bot - 遊戲自動化控制台",
     "windows": [
       {
         "label": "main",
