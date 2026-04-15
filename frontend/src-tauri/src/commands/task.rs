@@ -1,6 +1,6 @@
-// 任務控制命令
-use crate::state::{AppState, TaskState};
-use serde::Deserialize;
+// 任務控制命令 — 使用 SQLite 資料庫
+use crate::database::{self, DbState};
+use serde::{Deserialize, Serialize};
 use tauri::State;
 
 #[derive(Debug, Deserialize)]
@@ -11,101 +11,112 @@ pub struct StartTaskParams {
     pub max_runs: u32,
 }
 
+/// 任務執行狀態（與前端和 DB 一致）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskState {
+    pub job_id: String,
+    pub script_id: String,
+    pub script_name: String,
+    pub run_mode: String,
+    pub max_runs: u32,
+    pub run_count: u32,
+    pub enabled: bool,
+    pub completed: bool,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub error_msg: String,
+}
+
 /// 啟動任務
 #[tauri::command]
 pub async fn task_start(
-    state: State<'_, AppState>,
+    db: State<'_, DbState>,
     params: StartTaskParams,
 ) -> Result<TaskState, String> {
-    let job_id = uuid::Uuid::new_v4().to_string();
-
-    let task = TaskState {
-        job_id: job_id.clone(),
-        script_id: params.script_id,
-        script_name: params.script_name.clone(),
-        enabled: true,
-        completed: false,
-        run_count: 0,
-        max_runs: if params.run_mode == "fixed" { params.max_runs } else { 0 },
-        run_mode: params.run_mode,
-    };
-
-    let mut tasks = state.tasks.lock().map_err(|e| e.to_string())?;
-    tasks.push(task.clone());
-
-    let mut logs = state.logs.lock().map_err(|e| e.to_string())?;
-    logs.push(format!("🚀 已啟動任務: {}", params.script_name));
-
-    // TODO: 透過 PythonBridge 實際啟動腳本執行
-
-    Ok(task)
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    
+    let task_json = database::task_create_db(
+        &conn,
+        &params.script_id,
+        &params.script_name,
+        &params.run_mode,
+        params.max_runs,
+    ).map_err(|e| e.to_string())?;
+    
+    // 記錄日誌
+    let msg = format!("🚀 已啟動任務: {} ({})", params.script_name, params.run_mode);
+    database::log_add_db(&conn, &msg, "info", "task").ok();
+    
+    // 轉換為 TaskState
+    serde_json::from_value(task_json).map_err(|e| e.to_string())
 }
 
 /// 暫停/繼續任務
 #[tauri::command]
 pub async fn task_toggle(
-    state: State<'_, AppState>,
+    db: State<'_, DbState>,
     job_id: String,
 ) -> Result<TaskState, String> {
-    let mut tasks = state.tasks.lock().map_err(|e| e.to_string())?;
-
-    let task = tasks
-        .iter_mut()
-        .find(|t| t.job_id == job_id)
-        .ok_or("找不到指定的任務")?;
-
-    task.enabled = !task.enabled;
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    
+    let task_json = database::task_toggle_db(&conn, &job_id).map_err(|e| e.to_string())?;
+    let task: TaskState = serde_json::from_value(task_json).map_err(|e| e.to_string())?;
+    
+    // 記錄日誌
     let status = if task.enabled { "▶️ 已繼續" } else { "⏸️ 已暫停" };
-
-    let task_clone = task.clone();
-
-    drop(tasks);
-    let mut logs = state.logs.lock().map_err(|e| e.to_string())?;
-    logs.push(format!("{} 任務: {}", status, task_clone.script_name));
-
-    Ok(task_clone)
+    let msg = format!("{} 任務: {}", status, task.script_name);
+    database::log_add_db(&conn, &msg, "info", "task").ok();
+    
+    Ok(task)
 }
 
 /// 停止並移除任務
 #[tauri::command]
 pub async fn task_stop(
-    state: State<'_, AppState>,
+    db: State<'_, DbState>,
     job_id: String,
 ) -> Result<(), String> {
-    let mut tasks = state.tasks.lock().map_err(|e| e.to_string())?;
-
-    let name = tasks
-        .iter()
-        .find(|t| t.job_id == job_id)
-        .map(|t| t.script_name.clone());
-
-    tasks.retain(|t| t.job_id != job_id);
-
-    if let Some(name) = name {
-        let mut logs = state.logs.lock().map_err(|e| e.to_string())?;
-        logs.push(format!("🛑 已停止任務: {}", name));
-    }
-
-    // TODO: 透過 PythonBridge 實際停止腳本
-
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    
+    // 先取得任務名稱用於日誌
+    let task_json = database::task_get_db(&conn, &job_id)
+        .unwrap_or_else(|_| serde_json::json!({"script_name": "未知"}));
+    let name = task_json["script_name"].as_str().unwrap_or("未知");
+    
+    // 停止任務
+    database::task_stop_db(&conn, &job_id).map_err(|e| e.to_string())?;
+    
+    // 記錄日誌
+    let msg = format!("🛑 已停止任務: {} (job={})", name, &job_id[..8.min(job_id.len())]);
+    database::log_add_db(&conn, &msg, "info", "task").ok();
+    
     Ok(())
 }
 
 /// 取得所有任務狀態
 #[tauri::command]
-pub async fn task_list(state: State<'_, AppState>) -> Result<Vec<TaskState>, String> {
-    let tasks = state.tasks.lock().map_err(|e| e.to_string())?;
-    Ok(tasks.clone())
+pub async fn task_list(db: State<'_, DbState>) -> Result<Vec<TaskState>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let tasks_json = database::task_list_db(&conn).map_err(|e| e.to_string())?;
+    
+    // 將 JSON Value 轉換為 TaskState 型別
+    let tasks: Vec<TaskState> = tasks_json
+        .into_iter()
+        .filter_map(|val| serde_json::from_value(val).ok())
+        .collect();
+    
+    Ok(tasks)
 }
 
 /// 取得日誌
 #[tauri::command]
 pub async fn get_logs(
-    state: State<'_, AppState>,
+    db: State<'_, DbState>,
     limit: Option<usize>,
 ) -> Result<Vec<String>, String> {
-    let logs = state.logs.lock().map_err(|e| e.to_string())?;
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
     let limit = limit.unwrap_or(100);
-    let start = if logs.len() > limit { logs.len() - limit } else { 0 };
-    Ok(logs[start..].to_vec())
+    
+    database::log_list_db(&conn, limit).map_err(|e| e.to_string())
 }

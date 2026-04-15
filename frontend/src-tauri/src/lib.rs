@@ -1,16 +1,22 @@
 // Game Bot — Tauri 應用模組註冊
 mod commands;
+mod database;
 mod python_bridge;
 mod state;
 
+use database::DbState;
 use state::AppState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 初始化資料庫
+    let db_state = DbState::new().expect("資料庫初始化失敗");
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
+        .manage(db_state)
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             // 裝置管理
