@@ -31,10 +31,10 @@ interface AppStore {
   // 任務
   tasks: TaskInfo[];
   fetchTasks: () => Promise<void>;
-  startTask: (scriptId: string, scriptName: string, runMode: string, maxRuns: number) => Promise<void>;
+  startTask: (scriptId: string, scriptName: string, runMode: string, maxRuns: number, loopInterval?: number) => Promise<void>;
   toggleTask: (jobId: string) => Promise<void>;
   stopTask: (jobId: string) => Promise<void>;
-  removeTask: (jobId: string) => void;
+  removeTask: (jobId: string) => Promise<void>;
 
   // 日誌
   logs: string[];
@@ -131,12 +131,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
       set({ tasks: [] });
     }
   },
-  startTask: async (scriptId, scriptName, runMode, maxRuns) => {
+  startTask: async (scriptId, scriptName, runMode, maxRuns, loopInterval = 3) => {
     const task = await api.taskStart({
       script_id: scriptId,
       script_name: scriptName,
       run_mode: runMode,
       max_runs: maxRuns,
+      loop_interval: loopInterval,
     });
     set((s) => ({ tasks: [...s.tasks, task] }));
     get().addLog(`🚀 已啟動任務: ${scriptName}`);
@@ -157,8 +158,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }));
     get().addLog('🛑 已停止任務');
   },
-  removeTask: (jobId) => {
+  removeTask: async (jobId) => {
+    await api.taskRemove(jobId);
     set((s) => ({ tasks: s.tasks.filter((t) => t.job_id !== jobId) }));
+    get().addLog('🗑️ 已移除任務');
   },
 
   // ── 日誌 ──

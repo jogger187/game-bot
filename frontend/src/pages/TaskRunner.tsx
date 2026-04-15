@@ -4,7 +4,7 @@ import {
   Box, Typography, Paper, Table, TableBody, TableCell, TableContainer,
   TableHead, TableRow, IconButton, Button, Chip, FormControl, InputLabel,
   Select, MenuItem, Dialog, DialogTitle, DialogContent, DialogActions,
-  Tooltip,
+  Tooltip, TextField, RadioGroup, FormControlLabel, Radio, FormLabel,
 } from '@mui/material';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import PauseIcon from '@mui/icons-material/Pause';
@@ -16,6 +16,9 @@ const TaskRunner = () => {
   const { scripts, tasks, fetchScripts, fetchTasks, startTask, toggleTask, stopTask, removeTask } = useAppStore();
   const [launchOpen, setLaunchOpen] = useState(false);
   const [selectedScript, setSelectedScript] = useState('');
+  const [runMode, setRunMode] = useState<'loop' | 'fixed'>('loop');
+  const [maxRuns, setMaxRuns] = useState<number>(1);
+  const [loopInterval, setLoopInterval] = useState<number>(3);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // 初始載入 + 自動輪詢任務狀態
@@ -36,9 +39,12 @@ const TaskRunner = () => {
   const handleStart = async () => {
     const script = scripts.find((s) => s.id === selectedScript);
     if (!script) return;
-    await startTask(script.id, script.name, 'loop', 0);
+    await startTask(script.id, script.name, runMode, maxRuns, loopInterval);
     setLaunchOpen(false);
     setSelectedScript('');
+    setRunMode('loop');
+    setMaxRuns(1);
+    setLoopInterval(3);
   };
 
   // 狀態顏色和文字
@@ -130,7 +136,7 @@ const TaskRunner = () => {
       </TableContainer>
 
       {/* 啟動任務對話框 */}
-      <Dialog open={launchOpen} onClose={() => setLaunchOpen(false)} maxWidth="xs" fullWidth>
+      <Dialog open={launchOpen} onClose={() => setLaunchOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle>啟動新任務</DialogTitle>
         <DialogContent>
           <FormControl fullWidth sx={{ mt: 1 }}>
@@ -141,6 +147,37 @@ const TaskRunner = () => {
               ))}
             </Select>
           </FormControl>
+
+          <FormControl component="fieldset" sx={{ mt: 3 }}>
+            <FormLabel component="legend">執行模式</FormLabel>
+            <RadioGroup value={runMode} onChange={(e) => setRunMode(e.target.value as 'loop' | 'fixed')}>
+              <FormControlLabel value="loop" control={<Radio />} label="常駐循環" />
+              <FormControlLabel value="fixed" control={<Radio />} label="指定循環次數" />
+            </RadioGroup>
+          </FormControl>
+
+          {runMode === 'fixed' && (
+            <TextField
+              fullWidth
+              label="執行次數"
+              type="number"
+              value={maxRuns}
+              onChange={(e) => setMaxRuns(Math.max(1, parseInt(e.target.value) || 1))}
+              sx={{ mt: 2 }}
+              slotProps={{ htmlInput: { min: 1 } }}
+            />
+          )}
+
+          <TextField
+            fullWidth
+            label="循環間隔 (秒)"
+            type="number"
+            value={loopInterval}
+            onChange={(e) => setLoopInterval(Math.max(0, parseInt(e.target.value) || 0))}
+            sx={{ mt: 2 }}
+            helperText="每次執行完成後等待的時間"
+            slotProps={{ htmlInput: { min: 0 } }}
+          />
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setLaunchOpen(false)}>取消</Button>

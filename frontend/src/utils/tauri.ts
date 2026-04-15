@@ -106,6 +106,7 @@ export const taskStart = async (params: {
   script_name: string;
   run_mode: string;
   max_runs: number;
+  loop_interval?: number;
 }): Promise<TaskInfo> => {
   if (isTauri()) return tauriInvoke<TaskInfo>('task_start', { params });
   return apiCall<TaskInfo>('/tasks', {
@@ -121,6 +122,11 @@ export const taskToggle = async (jobId: string): Promise<TaskInfo> => {
 
 export const taskStop = async (jobId: string): Promise<void> => {
   if (isTauri()) return tauriInvoke<void>('task_stop', { jobId });
+  await apiCall(`/tasks/${encodeURIComponent(jobId)}/stop`, { method: 'POST' });
+};
+
+export const taskRemove = async (jobId: string): Promise<void> => {
+  if (isTauri()) return tauriInvoke<void>('task_remove', { jobId });
   await apiCall(`/tasks/${encodeURIComponent(jobId)}`, { method: 'DELETE' });
 };
 

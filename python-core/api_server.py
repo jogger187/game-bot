@@ -1,16 +1,16 @@
 """
-Python HTTP API 伺服器 — 提供 ADB 裝置控制與截圖 REST API
-讓前端在瀏覽器開發模式下能直接操作真實模擬器
+Python HTTP API 伺服器 — 使用 SQLite 持久化儲存
+讓前端在瀏覽器開發模式下能直接操作，所有資料永久保存
 """
 import asyncio
 import base64
 import json
-import os
 import subprocess
-import shutil
 from pathlib import Path
 from aiohttp import web
 from aiohttp.web import middleware
+
+import database as db
 
 # 專案根目錄
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -19,26 +19,28 @@ SCRIPTS_DIR = PROJECT_ROOT / "scripts"
 ASSETS_DIR.mkdir(exist_ok=True)
 SCRIPTS_DIR.mkdir(exist_ok=True)
 
-# 全域狀態
-state = {
+# 全域 DB 連線（啟動時初始化）
+conn = None
+
+# 裝置狀態（仍為記憶體，因為是即時狀態）
+device_state = {
     "connected": False,
     "serial": "",
     "mode": "adb",
     "emulator_type": "auto",
     "resolution": [0, 0],
 }
-logs = []
 
 
-def add_log(msg: str):
-    """新增日誌"""
+def add_log(msg: str, level: str = "info", source: str = "system", job_id=None):
+    """新增日誌（寫入 DB + 終端輸出）"""
     from datetime import datetime
     ts = datetime.now().strftime("%H:%M:%S")
-    entry = f"[{ts}] {msg}"
-    logs.append(entry)
-    if len(logs) > 500:
-        logs.pop(0)
-    print(entry)
+    print(f"[{ts}] {msg}")
+    try:
+        db.log_add(conn, msg, level=level, source=source, job_id=job_id)
+    except Exception as e:
+        print(f"⚠️ 日誌寫入失敗: {e}")
 
 
 def run_adb(*args, serial=None):
@@ -116,28 +118,28 @@ async def device_connect(request):
         except (ValueError, IndexError):
             pass
 
-    state["connected"] = True
-    state["serial"] = serial
-    state["resolution"] = resolution
-    state["emulator_type"] = data.get("emulator_type", "auto")
+    device_state["connected"] = True
+    device_state["serial"] = serial
+    device_state["resolution"] = resolution
+    device_state["emulator_type"] = data.get("emulator_type", "auto")
 
-    add_log(f"✅ 已連接裝置: {serial} ({resolution[0]}x{resolution[1]})")
-    return web.json_response(state)
+    add_log(f"✅ 已連接裝置: {serial} ({resolution[0]}x{resolution[1]})", source="device")
+    return web.json_response(device_state)
 
 
 async def device_disconnect(request):
     """斷開裝置"""
-    old_serial = state["serial"]
-    state["connected"] = False
-    state["serial"] = ""
-    state["resolution"] = [0, 0]
-    add_log(f"🔌 已斷開裝置: {old_serial}")
+    old_serial = device_state["serial"]
+    device_state["connected"] = False
+    device_state["serial"] = ""
+    device_state["resolution"] = [0, 0]
+    add_log(f"🔌 已斷開裝置: {old_serial}", source="device")
     return web.json_response({"ok": True})
 
 
 async def device_status(request):
     """取得裝置狀態"""
-    return web.json_response(state)
+    return web.json_response(device_state)
 
 
 # ═══════════════════════════════════════════
@@ -145,13 +147,12 @@ async def device_status(request):
 # ═══════════════════════════════════════════
 async def screenshot_capture(request):
     """擷取裝置截圖（返回 base64）"""
-    if not state["connected"]:
+    if not device_state["connected"]:
         return web.json_response({"error": "裝置未連線"}, status=400)
 
-    serial = state["serial"]
-    add_log(f"📸 正在擷取截圖... ({serial})")
+    serial = device_state["serial"]
+    add_log(f"📸 正在擷取截圖... ({serial})", source="device")
 
-    # 使用 adb screencap
     try:
         proc = await asyncio.create_subprocess_exec(
             "adb", "-s", serial, "exec-out", "screencap", "-p",
@@ -161,47 +162,47 @@ async def screenshot_capture(request):
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
 
         if not stdout:
-            add_log(f"❌ 截圖失敗: {stderr.decode()}")
+            add_log(f"❌ 截圖失敗: {stderr.decode()}", level="error", source="device")
             return web.json_response({"error": "截圖失敗"}, status=500)
 
-        # 取得圖片尺寸
         from PIL import Image
         import io
         img = Image.open(io.BytesIO(stdout))
         width, height = img.size
 
-        # 轉 base64
         b64 = base64.b64encode(stdout).decode("utf-8")
         image_b64 = f"data:image/png;base64,{b64}"
 
-        add_log(f"📸 截圖完成: {width}x{height}")
+        add_log(f"📸 截圖完成: {width}x{height}", source="device")
         return web.json_response({
             "image_b64": image_b64,
             "width": width,
             "height": height,
         })
     except asyncio.TimeoutError:
-        add_log("❌ 截圖逾時")
+        add_log("❌ 截圖逾時", level="error", source="device")
         return web.json_response({"error": "截圖逾時"}, status=500)
     except Exception as e:
-        add_log(f"❌ 截圖錯誤: {e}")
+        add_log(f"❌ 截圖錯誤: {e}", level="error", source="device")
         return web.json_response({"error": str(e)}, status=500)
 
 
 # ═══════════════════════════════════════════
-#  資源 API
+#  資源 API — 使用 SQLite + 檔案系統
 # ═══════════════════════════════════════════
-async def asset_list(request):
+async def api_asset_list(request):
     """列出所有模板圖片"""
+    # 同時從檔案系統同步到 DB
     assets = []
     if ASSETS_DIR.exists():
         for f in sorted(ASSETS_DIR.iterdir()):
             if f.suffix.lower() in (".png", ".jpg", ".jpeg"):
+                db.asset_upsert(conn, name=f.name, file_path=str(f), file_size=f.stat().st_size)
                 assets.append({"name": f.name, "size": f.stat().st_size})
     return web.json_response(assets)
 
 
-async def asset_save(request):
+async def api_asset_save(request):
     """儲存裁切的模板圖片"""
     data = await request.json()
     name = data.get("name", "")
@@ -210,7 +211,6 @@ async def asset_save(request):
     if not name or not image_b64:
         return web.json_response({"error": "缺少 name 或 image_b64"}, status=400)
 
-    # 解碼 base64
     if "," in image_b64:
         image_b64 = image_b64.split(",", 1)[1]
 
@@ -218,21 +218,25 @@ async def asset_save(request):
     filepath = ASSETS_DIR / name
     filepath.write_bytes(img_data)
 
+    # 寫入 DB metadata
+    db.asset_upsert(conn, name=name, file_path=str(filepath), file_size=len(img_data))
+
     add_log(f"💾 已儲存模板: {name} ({len(img_data)} bytes)")
     return web.json_response({"name": name, "size": len(img_data)})
 
 
-async def asset_delete(request):
+async def api_asset_delete(request):
     """刪除模板圖片"""
     name = request.match_info["name"]
     filepath = ASSETS_DIR / name
     if filepath.exists():
         filepath.unlink()
-        add_log(f"🗑️ 已刪除模板: {name}")
+    db.asset_delete(conn, name)
+    add_log(f"🗑️ 已刪除模板: {name}")
     return web.json_response({"ok": True})
 
 
-async def asset_read(request):
+async def api_asset_read(request):
     """讀取模板圖片（返回 base64）"""
     name = request.match_info["name"]
     filepath = ASSETS_DIR / name
@@ -248,193 +252,227 @@ async def asset_read(request):
 
 
 # ═══════════════════════════════════════════
-#  腳本 API
+#  腳本 API — 使用 SQLite
 # ═══════════════════════════════════════════
-async def script_list(request):
+async def api_script_list(request):
     """列出所有腳本"""
-    scripts = []
-    if SCRIPTS_DIR.exists():
-        for f in sorted(SCRIPTS_DIR.iterdir()):
-            if f.suffix == ".json":
-                try:
-                    data = json.loads(f.read_text("utf-8"))
-                    scripts.append(data)
-                except (json.JSONDecodeError, OSError):
-                    pass
+    scripts = db.script_list(conn)
     return web.json_response(scripts)
 
 
-async def script_create(request):
+async def api_script_create(request):
     """建立新腳本"""
     data = await request.json()
     name = data.get("name", "新腳本")
-    from datetime import datetime
-    import uuid
-
-    now = datetime.utcnow().isoformat() + "Z"
-    script_id = str(uuid.uuid4())
-
-    script = {
-        "id": script_id,
-        "name": name,
-        "version": 1,
-        "created_at": now,
-        "updated_at": now,
-        "nodes": [
-            {"id": "start_1", "type": "start", "position": {"x": 100, "y": 200}, "data": {}},
-            {"id": "end_1", "type": "end", "position": {"x": 600, "y": 200}, "data": {}},
-        ],
-        "edges": [],
-        "settings": {"loop_enabled": True, "interval": 3, "max_runs": 0},
-        "rules": [],
-    }
-
-    filepath = SCRIPTS_DIR / f"{script_id}.json"
-    filepath.write_text(json.dumps(script, ensure_ascii=False, indent=2), encoding="utf-8")
-    add_log(f"📝 已建立腳本: {name} ({script_id})")
+    script = db.script_create(conn, name)
+    add_log(f"📝 已建立腳本: {name} ({script['id'][:8]}...)", source="script")
     return web.json_response(script)
 
 
-async def script_save(request):
+async def api_script_save(request):
     """儲存腳本"""
-    script = await request.json()
-    script_id = script.get("id", "")
+    script_data = await request.json()
+    script_id = script_data.get("id", "")
 
     if not script_id:
         return web.json_response({"error": "缺少 script id"}, status=400)
 
-    from datetime import datetime
-    script["updated_at"] = datetime.utcnow().isoformat() + "Z"
-    script["version"] = script.get("version", 0) + 1
+    # 如果 DB 中不存在，先建立
+    existing = db.script_get(conn, script_id)
+    if not existing:
+        # 直接 INSERT（用於從 JSON 遷移過來的場景）
+        conn.execute(
+            """INSERT INTO scripts (id, name, version, nodes, edges, settings, rules, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                script_id,
+                script_data.get("name", ""),
+                script_data.get("version", 1),
+                json.dumps(script_data.get("nodes", [])),
+                json.dumps(script_data.get("edges", [])),
+                json.dumps(script_data.get("settings", {})),
+                json.dumps(script_data.get("rules", [])),
+                script_data.get("created_at", ""),
+                script_data.get("updated_at", ""),
+            ),
+        )
+        conn.commit()
+        result = db.script_get(conn, script_id)
+    else:
+        result = db.script_save(conn, script_data)
 
-    filepath = SCRIPTS_DIR / f"{script_id}.json"
-    filepath.write_text(json.dumps(script, ensure_ascii=False, indent=2), encoding="utf-8")
-    add_log(f"💾 已儲存腳本: {script.get('name', '')} (v{script['version']})")
-    return web.json_response(script)
+    add_log(f"💾 已儲存腳本: {result['name']} (v{result['version']})", source="script")
+    return web.json_response(result)
 
 
-async def script_delete(request):
+async def api_script_delete(request):
     """刪除腳本"""
     script_id = request.match_info["script_id"]
-    filepath = SCRIPTS_DIR / f"{script_id}.json"
-    if filepath.exists():
-        filepath.unlink()
-        add_log(f"🗑️ 已刪除腳本: {script_id}")
+    db.script_delete(conn, script_id)
+    add_log(f"🗑️ 已刪除腳本: {script_id[:8]}...", source="script")
     return web.json_response({"ok": True})
 
 
 # ═══════════════════════════════════════════
-#  任務執行 API
+#  任務執行 API — 使用 SQLite 持久化
 # ═══════════════════════════════════════════
 import threading
 from script_runner import ScriptRunner
 
-# 活躍任務 { job_id: { runner, thread, info } }
-active_tasks = {}
+# 執行中的 runner 實例（記憶體中保存，用於控制執行緒）
+active_runners = {}
 
 
-async def task_start(request):
+async def api_task_start(request):
     """啟動一個腳本任務"""
     data = await request.json()
     script_id = data.get("script_id", "")
+    script_name = data.get("script_name", "")
     run_mode = data.get("run_mode", "loop")
     max_runs = data.get("max_runs", 0)
+    loop_interval = data.get("loop_interval", 3)  # 獲取循環間隔參數，默認 3 秒
 
-    if not state["connected"]:
+    if not device_state["connected"]:
         return web.json_response({"error": "裝置未連線"}, status=400)
 
-    # 讀取腳本
-    script_path = SCRIPTS_DIR / f"{script_id}.json"
-    if not script_path.exists():
+    # 從 DB 讀取腳本
+    script = db.script_get(conn, script_id)
+    if not script:
         return web.json_response({"error": f"腳本不存在: {script_id}"}, status=404)
 
-    script = json.loads(script_path.read_text("utf-8"))
-
     # 覆蓋執行設定
+    settings = script.get("settings", {})
     if run_mode == "fixed":
-        script["settings"]["loop_enabled"] = True
-        script["settings"]["max_runs"] = max_runs
+        settings["loop_enabled"] = True
+        settings["max_runs"] = max_runs
     elif run_mode == "loop":
-        script["settings"]["loop_enabled"] = True
-        script["settings"]["max_runs"] = 0
+        settings["loop_enabled"] = True
+        settings["max_runs"] = 0
     else:
-        script["settings"]["loop_enabled"] = False
+        settings["loop_enabled"] = False
+    settings["interval"] = loop_interval  # 設定循環間隔
+    script["settings"] = settings
 
-    import uuid
-    job_id = str(uuid.uuid4())[:8]
+    # 建立任務記錄到 DB
+    task_info = db.task_create(conn, script_id, script_name or script["name"], run_mode, max_runs)
+    job_id = task_info["job_id"]
 
     # 建立 runner
-    runner = ScriptRunner(serial=state["serial"], on_log=add_log)
-
-    task_info = {
-        "job_id": job_id,
-        "script_id": script_id,
-        "script_name": script.get("name", ""),
-        "enabled": True,
-        "completed": False,
-        "run_count": 0,
-        "max_runs": max_runs,
-        "run_mode": run_mode,
-    }
+    runner = ScriptRunner(serial=device_state["serial"], on_log=lambda msg: add_log(msg, source="task", job_id=job_id))
 
     def run_in_thread():
         try:
             runner.run(script)
         finally:
-            task_info["completed"] = True
-            task_info["enabled"] = False
-            task_info["run_count"] = runner.run_count
+            # 任務結束時更新次數並標記為已完成（暫停狀態）
+            db.task_update_count(conn, job_id, runner.run_count)
+            db.task_complete(conn, job_id)
+            active_runners.pop(job_id, None)
 
     t = threading.Thread(target=run_in_thread, daemon=True)
     t.start()
 
-    active_tasks[job_id] = {"runner": runner, "thread": t, "info": task_info}
-    add_log(f"🚀 任務已啟動: {script.get('name', '')} (job={job_id})")
+    active_runners[job_id] = {"runner": runner, "thread": t}
+    add_log(f"🚀 任務已啟動: {script['name']} (job={job_id})", source="task", job_id=job_id)
     return web.json_response(task_info)
 
 
-async def task_list(request):
+async def api_task_list(request):
     """列出所有任務"""
-    # 更新任務狀態
-    for jid, task in active_tasks.items():
-        runner = task["runner"]
-        task["info"]["run_count"] = runner.run_count
-        task["info"]["enabled"] = runner.running and not runner.paused
-        task["info"]["completed"] = not runner.running
-    return web.json_response([t["info"] for t in active_tasks.values()])
+    # 更新執行中任務的 run_count
+    for jid, entry in active_runners.items():
+        runner = entry["runner"]
+        db.task_update_count(conn, jid, runner.run_count)
+        # 同步 enabled 狀態
+        task = db.task_get(conn, jid)
+        if task and not task["completed"]:
+            new_enabled = runner.running and not runner.paused
+            if new_enabled != task["enabled"]:
+                conn.execute(
+                    "UPDATE tasks SET enabled = ?, updated_at = ? WHERE job_id = ?",
+                    (1 if new_enabled else 0, db._now_iso(), jid),
+                )
+                conn.commit()
+
+    tasks = db.task_list(conn)
+    return web.json_response(tasks)
 
 
-async def task_toggle(request):
+async def api_task_toggle(request):
     """暫停/繼續任務"""
     job_id = request.match_info["job_id"]
-    task = active_tasks.get(job_id)
+
+    # 如果有 runner，先操作 runner
+    entry = active_runners.get(job_id)
+    if entry:
+        entry["runner"].toggle_pause()
+
+    task = db.task_toggle(conn, job_id)
     if not task:
         return web.json_response({"error": "任務不存在"}, status=404)
-    task["runner"].toggle_pause()
-    task["info"]["enabled"] = not task["runner"].paused
-    return web.json_response(task["info"])
+
+    status_text = "▶️ 任務繼續" if task["enabled"] else "⏸️ 任務暫停"
+    add_log(f"{status_text}: {task['script_name']}", source="task", job_id=job_id)
+    return web.json_response(task)
 
 
-async def task_stop(request):
+async def api_task_stop(request):
     """停止任務"""
     job_id = request.match_info["job_id"]
-    task = active_tasks.get(job_id)
-    if not task:
-        return web.json_response({"error": "任務不存在"}, status=404)
-    task["runner"].stop()
-    task["info"]["enabled"] = False
-    task["info"]["completed"] = True
-    add_log(f"🛑 任務已停止: {task['info']['script_name']} (job={job_id})")
+
+    # 停止 runner
+    entry = active_runners.pop(job_id, None)
+    if entry:
+        entry["runner"].stop()
+
+    db.task_stop(conn, job_id)
+    task = db.task_get(conn, job_id)
+    name = task["script_name"] if task else "未知"
+    add_log(f"🛑 任務已停止: {name} (job={job_id})", source="task", job_id=job_id)
+    return web.json_response({"ok": True})
+
+
+async def api_task_remove(request):
+    """移除任務（從列表刪除）"""
+    job_id = request.match_info["job_id"]
+
+    # 確保 runner 已停止
+    entry = active_runners.pop(job_id, None)
+    if entry:
+        entry["runner"].stop()
+
+    task = db.task_get(conn, job_id)
+    name = task["script_name"] if task else "未知"
+    db.task_remove(conn, job_id)
+    add_log(f"🗑️ 已移除任務: {name} (job={job_id})", source="task")
     return web.json_response({"ok": True})
 
 
 # ═══════════════════════════════════════════
-#  日誌 API
+#  日誌 API — 使用 SQLite
 # ═══════════════════════════════════════════
-async def get_logs(request):
+async def api_get_logs(request):
     """取得日誌"""
-    limit = int(request.query.get("limit", "100"))
-    return web.json_response(logs[-limit:])
+    limit = int(request.query.get("limit", "200"))
+    logs = db.log_list(conn, limit=limit)
+    return web.json_response(logs)
+
+
+# ═══════════════════════════════════════════
+#  設定 API
+# ═══════════════════════════════════════════
+async def api_settings_get(request):
+    """取得所有設定"""
+    settings = db.settings_all(conn)
+    return web.json_response(settings)
+
+
+async def api_settings_set(request):
+    """更新設定"""
+    data = await request.json()
+    for key, value in data.items():
+        db.setting_set(conn, key, value)
+    return web.json_response({"ok": True})
 
 
 # ═══════════════════════════════════════════
@@ -453,34 +491,43 @@ def create_app():
     app.router.add_post("/api/screenshot", screenshot_capture)
 
     # 資源
-    app.router.add_get("/api/assets", asset_list)
-    app.router.add_post("/api/assets", asset_save)
-    app.router.add_delete("/api/assets/{name}", asset_delete)
-    app.router.add_get("/api/assets/{name}/read", asset_read)
+    app.router.add_get("/api/assets", api_asset_list)
+    app.router.add_post("/api/assets", api_asset_save)
+    app.router.add_delete("/api/assets/{name}", api_asset_delete)
+    app.router.add_get("/api/assets/{name}/read", api_asset_read)
 
     # 腳本
-    app.router.add_get("/api/scripts", script_list)
-    app.router.add_post("/api/scripts", script_create)
-    app.router.add_put("/api/scripts", script_save)
-    app.router.add_delete("/api/scripts/{script_id}", script_delete)
+    app.router.add_get("/api/scripts", api_script_list)
+    app.router.add_post("/api/scripts", api_script_create)
+    app.router.add_put("/api/scripts", api_script_save)
+    app.router.add_delete("/api/scripts/{script_id}", api_script_delete)
 
     # 任務
-    app.router.add_post("/api/tasks", task_start)
-    app.router.add_get("/api/tasks", task_list)
-    app.router.add_post("/api/tasks/{job_id}/toggle", task_toggle)
-    app.router.add_delete("/api/tasks/{job_id}", task_stop)
+    app.router.add_post("/api/tasks", api_task_start)
+    app.router.add_get("/api/tasks", api_task_list)
+    app.router.add_post("/api/tasks/{job_id}/toggle", api_task_toggle)
+    app.router.add_post("/api/tasks/{job_id}/stop", api_task_stop)
+    app.router.add_delete("/api/tasks/{job_id}", api_task_remove)
 
     # 日誌
-    app.router.add_get("/api/logs", get_logs)
+    app.router.add_get("/api/logs", api_get_logs)
+
+    # 設定
+    app.router.add_get("/api/settings", api_settings_get)
+    app.router.add_put("/api/settings", api_settings_set)
 
     return app
 
 
 if __name__ == "__main__":
+    # 初始化資料庫
+    conn = db.init_db()
     add_log("🚀 Game Bot API Server 啟動中...")
+
     app = create_app()
     print("=" * 50)
     print("  Game Bot Python API Server")
-    print("  http://localhost:8765")
+    print(f"  http://localhost:8765")
+    print(f"  📁 DB: {db.DB_PATH}")
     print("=" * 50)
     web.run_app(app, host="0.0.0.0", port=8765)
