@@ -34,6 +34,7 @@ interface AppStore {
   startTask: (scriptId: string, scriptName: string, runMode: string, maxRuns: number) => Promise<void>;
   toggleTask: (jobId: string) => Promise<void>;
   stopTask: (jobId: string) => Promise<void>;
+  removeTask: (jobId: string) => void;
 
   // 日誌
   logs: string[];
@@ -148,6 +149,15 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
   stopTask: async (jobId) => {
     await api.taskStop(jobId);
+    // 停止後標記為已完成，不從列表移除
+    set((s) => ({
+      tasks: s.tasks.map((t) =>
+        t.job_id === jobId ? { ...t, enabled: false, completed: true } : t
+      ),
+    }));
+    get().addLog('🛑 已停止任務');
+  },
+  removeTask: (jobId) => {
     set((s) => ({ tasks: s.tasks.filter((t) => t.job_id !== jobId) }));
   },
 
