@@ -92,7 +92,10 @@ echo "========================"
 echo ""
 
 # 攔截 Ctrl+C，清理子進程
-trap "echo ''; echo '🛑 停止服務...'; kill $API_PID $FRONT_PID 2>/dev/null; sleep 1; echo '✅ 已停止'; exit" SIGINT SIGTERM
+trap "echo ''; echo '🛑 停止服務...'; kill -TERM $API_PID $FRONT_PID 2>/dev/null; sleep 2; kill -9 $API_PID $FRONT_PID 2>/dev/null; echo '✅ 已停止'; exit" SIGINT SIGTERM
 
-# 等待任一進程結束
-wait
+# 輪詢兩個進程是否存活（避免 wait 直接接收 SIGINT）
+while kill -0 $API_PID 2>/dev/null || kill -0 $FRONT_PID 2>/dev/null; do
+    sleep 1
+done
+echo '⚠️  服務已結束'

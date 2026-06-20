@@ -41,28 +41,41 @@ def main():
 
     # ── 初始化核心模組 ────────────────────────────────────
 
-    # 1. ADB 控制器
+    # 1. 裝置控制器（根據模式選擇）
     device_cfg = config["device"]
     cap_method = device_cfg.get("mode", "adb")
     minicap_cfg = device_cfg.get("minicap", {})
 
-    adb = AdbController(
-        serial=device_cfg.get("serial"),
-        cap_method=cap_method,
-        minicap_quality=minicap_cfg.get("quality", 80),
-        minicap_fps=minicap_cfg.get("max_fps", 10),
-    )
-
-    # 根據模式連線
-    emu_cfg = device_cfg.get("emulator", {})
-    if cap_method == "emulator":
-        adb.connect_emulator(
-            emu_type=emu_cfg.get("type", "auto"),
-            install_path=emu_cfg.get("install_path"),
-            index=emu_cfg.get("index", 0),
+    if cap_method == "desktop":
+        # 桌面視窗擷取模式
+        from core.desktop_controller import DesktopController
+        desktop_cfg = device_cfg.get("desktop", {})
+        controller = DesktopController(
+            window_title=desktop_cfg.get("window_title"),
+            window_id=desktop_cfg.get("window_id"),
+            capture_fps=desktop_cfg.get("capture_fps", 10),
         )
+        controller.connect()
+        adb = controller  # 下游模組統一用 adb 變數
     else:
-        adb.connect()
+        # Android 模式（ADB / MiniCap / 模擬器）
+        adb = AdbController(
+            serial=device_cfg.get("serial"),
+            cap_method=cap_method,
+            minicap_quality=minicap_cfg.get("quality", 80),
+            minicap_fps=minicap_cfg.get("max_fps", 10),
+        )
+
+        # 根據模式連線
+        emu_cfg = device_cfg.get("emulator", {})
+        if cap_method == "emulator":
+            adb.connect_emulator(
+                emu_type=emu_cfg.get("type", "auto"),
+                install_path=emu_cfg.get("install_path"),
+                index=emu_cfg.get("index", 0),
+            )
+        else:
+            adb.connect()
 
     # 2. 模板比對
     matcher_cfg = config.get("matcher", {})

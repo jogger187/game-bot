@@ -4,7 +4,7 @@
 
 # 設備設定
 device:
-  mode: "adb"              # adb | minicap | emulator
+  mode: "adb"              # adb | minicap | emulator | desktop
   serial: "127.0.0.1:5555" # BlueStacks
   emulator:
     type: "auto"           # auto | mumu | ldplayer | bluestacks | nox | memu
@@ -13,6 +13,10 @@ device:
   minicap:
     quality: 80            # JPEG 品質 (1-100)
     max_fps: 10            # 最大幀率
+  desktop:
+    window_title: null     # 模糊匹配視窗標題 (例: "BlueStacks", "Genshin Impact")
+    window_id: null        # 或直接指定 macOS window ID
+    capture_fps: 10        # 擷取幀率上限
 
 # 截圖設定
 screenshot:

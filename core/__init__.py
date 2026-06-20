@@ -8,6 +8,7 @@ from .scene_detector import SceneDetector, SceneConfig, SceneIndicator
 from .text_parser import TextParser
 from .minicap_stream import MiniCapStream
 from .emulator_bridge import EmulatorBridge, EmulatorDetector, EmulatorType
+from .desktop_controller import DesktopController, DesktopWindow
 from .state_machine import GameFSM
 from .anti_detect import AntiDetect, AntiDetectConfig
 from .touch_replayer import TouchRecorder, TouchReplayer, TouchRecording
@@ -30,6 +31,7 @@ __all__ = [
     # 裝置
     "MiniCapStream",
     "EmulatorBridge", "EmulatorDetector", "EmulatorType",
+    "DesktopController", "DesktopWindow",
     # 任務框架
     "GameFSM",
     "AntiDetect", "AntiDetectConfig",

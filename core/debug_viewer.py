@@ -263,5 +263,116 @@ class DebugViewer:
                     await asyncio.sleep(self._screenshot_interval)
             except WebSocketDisconnect:
                 pass
+        # --- Desktop Window APIs ---
+
+        @app.get("/api/desktop/windows")
+        async def list_desktop_windows():
+            """列出可用的桌面視窗"""
+            try:
+                from .desktop_controller import DesktopController
+                windows = DesktopController.list_windows(include_offscreen=True)
+                return [w.to_dict() for w in windows]
+            except Exception as e:
+                return JSONResponse(status_code=500, content={"error": str(e)})
+
+        class DesktopConnectRequest(BaseModel):
+            window_title: str | None = None
+            window_id: int | None = None
+
+        @app.post("/api/desktop/connect")
+        async def connect_desktop_window(req: DesktopConnectRequest):
+            """連線到指定桌面視窗（替換當前 controller）"""
+            try:
+                from .desktop_controller import DesktopController
+                dc = DesktopController(
+                    window_title=req.window_title,
+                    window_id=req.window_id,
+                )
+                dc.connect()
+                self.adb = dc
+                win = dc._target_window
+                return {
+                    "success": True,
+                    "serial": dc.serial,
+                    "window": win.to_dict() if win else None,
+                }
+            except Exception as e:
+                return JSONResponse(status_code=500, content={"error": str(e)})
+
+        # --- Device Management APIs ---
+
+        @app.get("/api/devices")
+        async def list_devices():
+            """列出可連線的 ADB 裝置"""
+            try:
+                import subprocess
+                result = subprocess.run(
+                    ["adb", "devices"], capture_output=True, text=True, timeout=5
+                )
+                devices = []
+                for line in result.stdout.strip().split("\n")[1:]:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = line.split("\t")
+                    if len(parts) >= 2:
+                        devices.append({"serial": parts[0], "status": parts[1]})
+                return {"devices": devices}
+            except Exception as e:
+                return {"devices": [], "error": str(e)}
+
+        class DeviceConnectRequest(BaseModel):
+            serial: str | None = None
+            mode: str | None = None
+            emulator_type: str | None = None
+
+        @app.post("/api/device/connect")
+        async def connect_device(req: DeviceConnectRequest):
+            """連線到 ADB 裝置"""
+            try:
+                from .adb_controller import AdbController
+                adb = AdbController(serial=req.serial)
+                adb.connect(serial=req.serial)
+                self.adb = adb
+                w, h = adb.screen_size
+                return {
+                    "connected": True,
+                    "serial": adb.device.serial,
+                    "mode": req.mode or "adb",
+                    "resolution": [w, h],
+                }
+            except Exception as e:
+                return JSONResponse(status_code=500, content={"error": str(e)})
+
+        @app.post("/api/device/disconnect")
+        async def disconnect_device():
+            """斷開裝置連線"""
+            if self.adb and hasattr(self.adb, 'cleanup'):
+                self.adb.cleanup()
+            self.adb = None
+            return {"success": True}
+
+        @app.get("/api/device/status")
+        async def device_status():
+            """取得當前裝置狀態"""
+            if not self.adb:
+                return {"connected": False}
+            try:
+                w, h = self.adb.screen_size
+                serial = getattr(self.adb, 'serial', 'unknown')
+                if hasattr(serial, '__call__'):
+                    serial = 'unknown'
+                elif hasattr(self.adb, '_device') and self.adb._device:
+                    serial = self.adb._device.serial
+                elif hasattr(self.adb, '_target_window') and self.adb._target_window:
+                    serial = f"desktop:{self.adb._target_window.window_id}"
+                return {
+                    "connected": True,
+                    "serial": serial,
+                    "mode": "desktop" if type(self.adb).__name__ == "DesktopController" else "adb",
+                    "resolution": [w, h],
+                }
+            except Exception:
+                return {"connected": False}
 
         return app

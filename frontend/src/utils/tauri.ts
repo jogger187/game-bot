@@ -167,3 +167,38 @@ export const assetRead = async (name: string): Promise<string> => {
   const result = await apiCall<{ image_b64: string }>(`/assets/${encodeURIComponent(name)}/read`);
   return result.image_b64;
 };
+
+// ═══════════════════════════════════════════
+//  桌面視窗擷取
+// ═══════════════════════════════════════════
+export interface DesktopWindow {
+  window_id: number;
+  owner_name: string;
+  window_name: string;
+  pid: number;
+  width: number;
+  height: number;
+  x: number;
+  y: number;
+}
+
+export const desktopListWindows = async (): Promise<DesktopWindow[]> => {
+  if (isTauri()) return tauriInvoke<DesktopWindow[]>('desktop_list_windows');
+  return apiCall<DesktopWindow[]>('/desktop/windows');
+};
+
+export const desktopPickWindow = async (): Promise<DesktopWindow> => {
+  if (isTauri()) return tauriInvoke<DesktopWindow>('desktop_pick_window');
+  return apiCall<DesktopWindow>('/desktop/pick', { method: 'POST' });
+};
+
+export const desktopConnect = async (params: {
+  window_title?: string;
+  window_id?: number;
+}): Promise<DeviceInfo> => {
+  if (isTauri()) return tauriInvoke<DeviceInfo>('desktop_connect', { params });
+  return apiCall<DeviceInfo>('/desktop/connect', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  });
+};

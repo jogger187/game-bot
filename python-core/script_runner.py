@@ -37,6 +37,15 @@ class ScriptRunner:
         self.paused = False
         self.run_count = 0
         self._last_match_pos = None  # 最後一次找圖的匹配位置
+        
+        self.is_desktop = self.serial.startswith("desktop:")
+        if self.is_desktop:
+            from core.desktop_controller import DesktopController
+            wid = int(self.serial.split(":")[1])
+            self.desktop_controller = DesktopController(window_id=wid)
+            self.desktop_controller.connect()
+        else:
+            self.desktop_controller = None
 
     def log(self, msg: str):
         """記錄日誌"""
@@ -67,18 +76,27 @@ class ScriptRunner:
 
     def tap(self, x: int, y: int, hold_ms: int = 0):
         """點擊座標"""
-        if hold_ms > 0:
-            self.adb("shell", "input", "swipe", str(x), str(y), str(x), str(y), str(hold_ms))
+        if self.is_desktop:
+            self.desktop_controller.tap(x, y, hold_ms)
         else:
-            self.adb("shell", "input", "tap", str(x), str(y))
+            if hold_ms > 0:
+                self.adb("shell", "input", "swipe", str(x), str(y), str(x), str(y), str(hold_ms))
+            else:
+                self.adb("shell", "input", "tap", str(x), str(y))
 
     def swipe(self, x1: int, y1: int, x2: int, y2: int, duration: int = 300):
         """滑動"""
-        self.adb("shell", "input", "swipe", str(x1), str(y1), str(x2), str(y2), str(duration))
+        if self.is_desktop:
+            self.desktop_controller.swipe(x1, y1, x2, y2, duration)
+        else:
+            self.adb("shell", "input", "swipe", str(x1), str(y1), str(x2), str(y2), str(duration))
 
     def type_text(self, text: str):
         """輸入文字"""
-        self.adb("shell", "input", "text", text.replace(" ", "%s"))
+        if self.is_desktop:
+            self.desktop_controller.input_text(text)
+        else:
+            self.adb("shell", "input", "text", text.replace(" ", "%s"))
 
     def key_event(self, keycode: str):
         """按鍵事件"""
@@ -93,11 +111,15 @@ class ScriptRunner:
         """擷取截圖並轉為 OpenCV 格式"""
         if not HAS_CV2:
             return None
-        png_data = self.adb_raw("exec-out", "screencap", "-p")
-        if not png_data:
-            return None
-        arr = np.frombuffer(png_data, dtype=np.uint8)
-        return cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        
+        if self.is_desktop:
+            return self.desktop_controller.screenshot_np()
+        else:
+            png_data = self.adb_raw("exec-out", "screencap", "-p")
+            if not png_data:
+                return None
+            arr = np.frombuffer(png_data, dtype=np.uint8)
+            return cv2.imdecode(arr, cv2.IMREAD_COLOR)
 
     # ═══════════════════════════════════════════
     #  模板匹配

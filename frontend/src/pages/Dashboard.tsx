@@ -3,7 +3,7 @@ import { useEffect, useState, useCallback } from 'react';
 import {
   Box, Paper, Typography, Button, Grid, Card, CardContent, Chip,
   Dialog, DialogTitle, DialogContent, List, ListItemButton, ListItemText,
-  ListItemIcon, CircularProgress,
+  ListItemIcon, CircularProgress, Tabs, Tab, TextField,
 } from '@mui/material';
 import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
 import PlayCircleIcon from '@mui/icons-material/PlayCircle';
@@ -11,9 +11,12 @@ import DescriptionIcon from '@mui/icons-material/Description';
 import ImageIcon from '@mui/icons-material/Image';
 import ComputerIcon from '@mui/icons-material/Computer';
 import SmartphoneIcon from '@mui/icons-material/Smartphone';
+import DesktopWindowsIcon from '@mui/icons-material/DesktopWindows';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import AdsClickIcon from '@mui/icons-material/AdsClick';
 import { useAppStore } from '../stores/appStore';
 import * as api from '../utils/tauri';
+import type { DesktopWindow } from '../utils/tauri';
 
 interface AdbDevice {
   serial: string;
@@ -27,6 +30,16 @@ const Dashboard = () => {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [devicesList, setDevicesList] = useState<AdbDevice[]>([]);
   const [loadingDevices, setLoadingDevices] = useState(false);
+  const [pickerTab, setPickerTab] = useState(0);  // 0=ADB, 1=Desktop
+  const [windowsList, setWindowsList] = useState<DesktopWindow[]>([]);
+  const [loadingWindows, setLoadingWindows] = useState(false);
+  const [pickingWindow, setPickingWindow] = useState(false);
+  const [windowSearch, setWindowSearch] = useState('');
+
+  const filteredWindows = windowsList.filter(w =>
+    w.owner_name.toLowerCase().includes(windowSearch.toLowerCase()) ||
+    w.window_name.toLowerCase().includes(windowSearch.toLowerCase())
+  );
 
   useEffect(() => { fetchDevice(); }, [fetchDevice]);
 
@@ -45,10 +58,42 @@ const Dashboard = () => {
     }
   }, []);
 
+  // 載入桌面視窗列表
+  const loadWindows = useCallback(async () => {
+    setLoadingWindows(true);
+    try {
+      const windows = await api.desktopListWindows();
+      setWindowsList(windows);
+    } catch {
+      setWindowsList([]);
+    } finally {
+      setLoadingWindows(false);
+    }
+  }, []);
+
   // 開啟裝置選擇器
   const openPicker = () => {
     setPickerOpen(true);
     loadDevices();
+    loadWindows();
+  };
+
+  const handlePickWindow = async () => {
+    setPickingWindow(true);
+    addLog('請在 15 秒內點擊目標視窗...');
+    try {
+      const win = await api.desktopPickWindow();
+      // 切換到桌面分頁，自動填入搜尋並選中
+      setPickerTab(1);
+      setWindowSearch(win.owner_name || win.window_name);
+      addLog(`✅ 選取視窗: ${win.owner_name} - ${win.window_name} (${win.width}x${win.height})`);
+      // 直接連線
+      selectDesktopWindow(win);
+    } catch (e: unknown) {
+      addLog(`❌ 選取失敗: ${(e as Error).message}`);
+    } finally {
+      setPickingWindow(false);
+    }
   };
 
   // 選擇裝置並連線
@@ -57,8 +102,22 @@ const Dashboard = () => {
     await connectDevice(serial);
   };
 
+  // 選擇桌面視窗並連線
+  const selectDesktopWindow = async (win: DesktopWindow) => {
+    setPickerOpen(false);
+    try {
+      await api.desktopConnect({ window_id: win.window_id });
+      await fetchDevice();
+    } catch {
+      // fallback
+      await connectDevice(`desktop:${win.window_id}`, 'desktop');
+    }
+  };
+
   // 判斷裝置類型圖標
   const getDeviceIcon = (serial: string) => {
+    if (serial.startsWith('desktop:'))
+      return <DesktopWindowsIcon sx={{ color: '#8b5cf6' }} />;
     if (serial.includes('emulator') || serial.includes('127.0.0.1') || serial.includes(':'))
       return <ComputerIcon sx={{ color: '#6366f1' }} />;
     return <SmartphoneIcon sx={{ color: '#10b981' }} />;
@@ -66,6 +125,7 @@ const Dashboard = () => {
 
   // 判斷裝置描述
   const getDeviceLabel = (serial: string) => {
+    if (serial.startsWith('desktop:')) return '桌面應用擷取';
     if (serial.includes('emulator')) return '模擬器 (BlueStacks/Nox)';
     if (serial.includes('127.0.0.1') || serial.match(/:\d+$/)) return '模擬器 (TCP)';
     return '實體手機 (USB)';
@@ -140,43 +200,122 @@ const Dashboard = () => {
       <Dialog open={pickerOpen} onClose={() => setPickerOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           選擇要連接的裝置
-          <Button size="small" startIcon={<RefreshIcon />} onClick={loadDevices} disabled={loadingDevices}>
-            重新掃描
-          </Button>
+          <Box>
+            <Button size="small" startIcon={<AdsClickIcon />} onClick={handlePickWindow} disabled={pickingWindow || loadingDevices || loadingWindows} sx={{ mr: 1 }}>
+              點擊選取視窗
+            </Button>
+            <Button size="small" startIcon={<RefreshIcon />} onClick={() => { loadDevices(); loadWindows(); }}
+              disabled={loadingDevices || loadingWindows}>
+              重新掃描
+            </Button>
+          </Box>
         </DialogTitle>
-        <DialogContent>
-          {loadingDevices ? (
-            <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
-              <CircularProgress />
-            </Box>
-          ) : devicesList.length === 0 ? (
-            <Box sx={{ textAlign: 'center', p: 4 }}>
-              <Typography color="text.secondary">找不到可用裝置</Typography>
-              <Typography variant="caption" color="text.secondary">
-                請確認模擬器已啟動或手機已透過 USB 連接
-              </Typography>
-            </Box>
-          ) : (
-            <List>
-              {devicesList.map((d) => (
-                <ListItemButton
-                  key={d.serial}
-                  onClick={() => selectDevice(d.serial)}
-                  sx={{
-                    border: '1px solid', borderColor: 'divider', borderRadius: 1, mb: 1,
-                    '&:hover': { borderColor: 'primary.main', bgcolor: 'rgba(99,102,241,0.08)' },
-                  }}
-                >
-                  <ListItemIcon>{getDeviceIcon(d.serial)}</ListItemIcon>
-                  <ListItemText
-                    primary={d.serial}
-                    secondary={getDeviceLabel(d.serial)}
-                    slotProps={{ primary: { sx: { fontFamily: 'monospace', fontWeight: 'bold' } } }}
-                  />
-                  <Chip label={d.status} size="small" color="success" variant="outlined" />
-                </ListItemButton>
-              ))}
-            </List>
+        <DialogContent sx={{ p: 0 }}>
+          <Tabs value={pickerTab} onChange={(_, v) => setPickerTab(v)} sx={{ px: 2, borderBottom: 1, borderColor: 'divider' }}>
+            <Tab label="Android 裝置" icon={<PhoneAndroidIcon />} iconPosition="start" sx={{ minHeight: 48 }} />
+            <Tab label="桌面應用" icon={<DesktopWindowsIcon />} iconPosition="start" sx={{ minHeight: 48 }} />
+          </Tabs>
+
+          {/* ADB 裝置分頁 */}
+          {pickerTab === 0 && (
+            loadingDevices ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+                <CircularProgress />
+              </Box>
+            ) : devicesList.length === 0 ? (
+              <Box sx={{ textAlign: 'center', p: 4 }}>
+                <Typography color="text.secondary">找不到可用裝置</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  請確認模擬器已啟動或手機已透過 USB 連接
+                </Typography>
+              </Box>
+            ) : (
+              <List sx={{ px: 2, py: 1 }}>
+                {devicesList.map((d) => (
+                  <ListItemButton
+                    key={d.serial}
+                    onClick={() => selectDevice(d.serial)}
+                    sx={{
+                      border: '1px solid', borderColor: 'divider', borderRadius: 1, mb: 1,
+                      '&:hover': { borderColor: 'primary.main', bgcolor: 'rgba(99,102,241,0.08)' },
+                    }}
+                  >
+                    <ListItemIcon>{getDeviceIcon(d.serial)}</ListItemIcon>
+                    <ListItemText
+                      primary={d.serial}
+                      secondary={getDeviceLabel(d.serial)}
+                      slotProps={{ primary: { sx: { fontFamily: 'monospace', fontWeight: 'bold' } } }}
+                    />
+                    <Chip label={d.status} size="small" color="success" variant="outlined" />
+                  </ListItemButton>
+                ))}
+              </List>
+            )
+          )}
+
+          {/* 桌面視窗分頁 */}
+          {pickerTab === 1 && (
+            loadingWindows ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+                <CircularProgress />
+              </Box>
+            ) : windowsList.length === 0 ? (
+              <Box sx={{ textAlign: 'center', p: 4 }}>
+                <Typography color="text.secondary">找不到可用視窗</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  請確認目標應用已開啟，且已授權螢幕錄製權限
+                </Typography>
+              </Box>
+            ) : (
+              <Box sx={{ px: 2, py: 1 }}>
+                <TextField
+                  fullWidth
+                  size="small"
+                  placeholder="搜尋應用程式名稱..."
+                  value={windowSearch}
+                  onChange={(e) => setWindowSearch(e.target.value)}
+                  sx={{ mb: 2 }}
+                />
+                <List>
+                  {filteredWindows.length === 0 ? (
+                    <Typography color="text.secondary" textAlign="center" sx={{ py: 2 }}>
+                      沒有符合的視窗
+                    </Typography>
+                  ) : (
+                    filteredWindows.map((win) => (
+                      <ListItemButton
+                        key={win.window_id}
+                        onClick={() => selectDesktopWindow(win)}
+                        sx={{
+                          border: '1px solid', borderColor: 'divider', borderRadius: 1, mb: 1,
+                          '&:hover': { borderColor: '#8b5cf6', bgcolor: 'rgba(139,92,246,0.08)' },
+                        }}
+                      >
+                        <ListItemIcon>
+                          <DesktopWindowsIcon sx={{ color: '#8b5cf6' }} />
+                    </ListItemIcon>
+                    <ListItemText
+                      primary={
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
+                            {win.owner_name}
+                          </Typography>
+                          {win.window_name && (
+                            <Typography variant="caption" color="text.secondary" noWrap sx={{ maxWidth: 180 }}>
+                              — {win.window_name}
+                            </Typography>
+                          )}
+                        </Box>
+                      }
+                      secondary={`${win.width}×${win.height} · PID ${win.pid}`}
+                    />
+                    <Chip label={`ID ${win.window_id}`} size="small" variant="outlined" sx={{ fontSize: 10 }} />
+                  </ListItemButton>
+                    ))
+                  )}
+                </List>
+              </Box>
+            )
           )}
         </DialogContent>
       </Dialog>

@@ -6,6 +6,7 @@ import asyncio
 import base64
 import json
 import subprocess
+import sys
 from pathlib import Path
 from aiohttp import web
 from aiohttp.web import middleware
@@ -14,6 +15,8 @@ import database as db
 
 # 專案根目錄
 PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
 ASSETS_DIR = PROJECT_ROOT / "assets"
 SCRIPTS_DIR = PROJECT_ROOT / "scripts"
 ASSETS_DIR.mkdir(exist_ok=True)
@@ -133,6 +136,7 @@ async def device_disconnect(request):
     device_state["connected"] = False
     device_state["serial"] = ""
     device_state["resolution"] = [0, 0]
+    _clear_desktop_cache()
     add_log(f"🔌 已斷開裝置: {old_serial}", source="device")
     return web.json_response({"ok": True})
 
@@ -143,36 +147,149 @@ async def device_status(request):
 
 
 # ═══════════════════════════════════════════
+#  桌面視窗 API
+# ═══════════════════════════════════════════
+async def desktop_windows(request):
+    """列出所有桌面視窗"""
+    try:
+        from core.desktop_controller import DesktopController
+        windows = DesktopController.list_windows(include_offscreen=True)
+        return web.json_response([w.to_dict() for w in windows])
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def desktop_pick_window(request):
+    """進入選取模式，擷取下一次滑鼠點擊的視窗"""
+    try:
+        script_path = PROJECT_ROOT / "python-core" / "pick_window.py"
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, str(script_path),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        
+        # 等待最多 15 秒
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=15.0)
+        except asyncio.TimeoutError:
+            proc.terminate()
+            return web.json_response({"error": "等待超時，請在 15 秒內點擊目標視窗"}, status=408)
+            
+        if proc.returncode == 0:
+            return web.json_response(json.loads(stdout.decode().strip()))
+        else:
+            return web.json_response({"error": stderr.decode().strip() or stdout.decode().strip()}, status=500)
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+async def desktop_connect(request):
+    """連接桌面視窗"""
+    data = await request.json()
+    window_id = data.get("window_id")
+    window_title = data.get("window_title")
+
+    try:
+        from core.desktop_controller import DesktopController
+        dc = DesktopController(window_id=window_id, window_title=window_title)
+        dc.connect()
+        
+        win = dc._target_window
+        device_state["connected"] = True
+        device_state["serial"] = dc.serial
+        device_state["mode"] = "desktop"
+        device_state["resolution"] = [win.width, win.height] if win else [0, 0]
+        device_state["window_id"] = win.window_id if win else None
+        
+        add_log(f"✅ 已連接桌面視窗: {win.owner_name} - {win.window_name} ({device_state['resolution'][0]}x{device_state['resolution'][1]})", source="device")
+        return web.json_response(device_state)
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+
+# ═══════════════════════════════════════════
 #  截圖 API
 # ═══════════════════════════════════════════
+
+# Desktop controller 單例快取（避免每次截圖重建）
+_desktop_controller_cache = {}
+
+
+def _get_desktop_controller(wid: int):
+    """取得或建立 DesktopController（快取，避免重複 connect）"""
+    if wid not in _desktop_controller_cache:
+        from core.desktop_controller import DesktopController
+        dc = DesktopController(window_id=wid)
+        dc.connect()
+        _desktop_controller_cache[wid] = dc
+    return _desktop_controller_cache[wid]
+
+
+def _clear_desktop_cache():
+    """清除快取（裝置斷線時呼叫）"""
+    _desktop_controller_cache.clear()
+
+
+def _do_desktop_screenshot(wid: int) -> tuple:
+    """同步截圖（在 executor thread 執行，避免 block event loop）"""
+    import io
+    dc = _get_desktop_controller(wid)
+    try:
+        img = dc.screenshot()
+    except Exception:
+        # 可能 window ID 失效，清快取重試一次
+        _desktop_controller_cache.pop(wid, None)
+        dc = _get_desktop_controller(wid)
+        img = dc.screenshot()
+    width, height = img.size
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+    return b64, width, height
+
+
 async def screenshot_capture(request):
     """擷取裝置截圖（返回 base64）"""
     if not device_state["connected"]:
         return web.json_response({"error": "裝置未連線"}, status=400)
 
     serial = device_state["serial"]
+    mode = device_state.get("mode", "adb")
     add_log(f"📸 正在擷取截圖... ({serial})", source="device")
 
+    import io
+    from PIL import Image
+
+    loop = asyncio.get_event_loop()
+
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "adb", "-s", serial, "exec-out", "screencap", "-p",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+        if mode == "desktop":
+            wid = device_state.get("window_id")
+            if not wid:
+                return web.json_response({"error": "沒有選擇視窗"}, status=400)
 
-        if not stdout:
-            add_log(f"❌ 截圖失敗: {stderr.decode()}", level="error", source="device")
-            return web.json_response({"error": "截圖失敗"}, status=500)
+            # 用 executor 執行同步 Quartz 截圖，避免 block event loop
+            b64, width, height = await asyncio.wait_for(
+                loop.run_in_executor(None, _do_desktop_screenshot, wid),
+                timeout=15
+            )
+        else:
+            proc = await asyncio.create_subprocess_exec(
+                "adb", "-s", serial, "exec-out", "screencap", "-p",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
 
-        from PIL import Image
-        import io
-        img = Image.open(io.BytesIO(stdout))
-        width, height = img.size
+            if not stdout:
+                add_log(f"❌ 截圖失敗: {stderr.decode()}", level="error", source="device")
+                return web.json_response({"error": "截圖失敗"}, status=500)
 
-        b64 = base64.b64encode(stdout).decode("utf-8")
+            img = Image.open(io.BytesIO(stdout))
+            width, height = img.size
+            b64 = base64.b64encode(stdout).decode("utf-8")
+
         image_b64 = f"data:image/png;base64,{b64}"
-
         add_log(f"📸 截圖完成: {width}x{height}", source="device")
         return web.json_response({
             "image_b64": image_b64,
@@ -499,6 +616,11 @@ def create_app():
     app.router.add_post("/api/device/disconnect", device_disconnect)
     app.router.add_get("/api/device/status", device_status)
 
+    # 桌面視窗
+    app.router.add_get("/api/desktop/windows", desktop_windows)
+    app.router.add_post("/api/desktop/connect", desktop_connect)
+    app.router.add_post('/api/desktop/pick', desktop_pick_window)
+
     # 截圖
     app.router.add_post("/api/screenshot", screenshot_capture)
 
@@ -532,6 +654,24 @@ def create_app():
 
 
 if __name__ == "__main__":
+    import signal
+
+    def _graceful_exit(signum, frame):
+        """SIGTERM/SIGINT graceful shutdown — 讓 Python 正常 cleanup，避免 Quartz segfault"""
+        print(f"\n[api_server] 收到 signal {signum}，正常關閉...")
+        # 停止所有 active runners
+        for jid, entry in list(active_runners.items()):
+            try:
+                entry["runner"].stop()
+            except Exception:
+                pass
+        # 清除 desktop controller cache
+        _clear_desktop_cache()
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, _graceful_exit)
+    signal.signal(signal.SIGINT, _graceful_exit)
+
     # 初始化資料庫
     conn = db.init_db()
     add_log("🚀 Game Bot API Server 啟動中...")

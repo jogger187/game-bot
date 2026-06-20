@@ -14,10 +14,9 @@ import math
 import random
 import time
 from enum import Enum, auto
+from typing import Any, Protocol, runtime_checkable
 
 from loguru import logger
-
-from .adb_controller import AdbController
 
 
 class Rhythm(Enum):
@@ -55,7 +54,7 @@ class InputSimulator:
 
     def __init__(
         self,
-        adb: AdbController,
+        adb: Any,
         tap_offset: int = 10,
         tap_delay: tuple[float, float] = (0.05, 0.15),
         action_delay: tuple[float, float] = (0.8, 1.5),
@@ -254,8 +253,10 @@ class InputSimulator:
             curvature=random.uniform(0.1, 0.3),
         )
 
-        # 嘗試用 sendevent（更精確）
+        # 嘗試用 sendevent（更精確，僅限 ADB 模式）
         try:
+            if not hasattr(self.adb, 'device') or not hasattr(self.adb.device, 'shell'):
+                raise RuntimeError("非 ADB 模式，跳過 sendevent")
             self._sendevent_path(path, duration_ms)
         except Exception:
             # Fallback: 用多段短 swipe 模擬曲線
@@ -310,7 +311,10 @@ class InputSimulator:
             time.sleep(interval)
 
     def _find_touch_device(self) -> str | None:
-        """找到觸控輸入裝置節點"""
+        """找到觸控輸入裝置節點（僅 ADB 模式）"""
+        # 非 ADB 模式直接回傳 None
+        if not hasattr(self.adb, 'device') or type(self.adb).__name__ == 'DesktopController':
+            return None
         try:
             output = self.adb.device.shell("getevent -pl 2>/dev/null | grep -B5 ABS_MT_POSITION")
             for line in output.split("\n"):
