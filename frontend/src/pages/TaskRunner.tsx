@@ -20,6 +20,7 @@ const TaskRunner = () => {
   const [runMode, setRunMode] = useState<'loop' | 'fixed' | 'scheduled'>('loop');
   const [maxRuns, setMaxRuns] = useState<number>(1);
   const [loopInterval, setLoopInterval] = useState<number>(3);
+  const [loopIntervalUnit, setLoopIntervalUnit] = useState<'s' | 'ms'>('s');
   const [scheduledTimes, setScheduledTimes] = useState<string[]>([]);
   const [newTime, setNewTime] = useState<string>('09:00:00');
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -42,12 +43,14 @@ const TaskRunner = () => {
   const handleStart = async () => {
     const script = scripts.find((s) => s.id === selectedScript);
     if (!script) return;
-    await startTask(script.id, script.name, runMode, maxRuns, loopInterval, scheduledTimes);
+    const finalInterval = loopIntervalUnit === 'ms' ? loopInterval / 1000 : loopInterval;
+    await startTask(script.id, script.name, runMode, maxRuns, finalInterval, scheduledTimes);
     setLaunchOpen(false);
     setSelectedScript('');
     setRunMode('loop');
     setMaxRuns(1);
     setLoopInterval(3);
+    setLoopIntervalUnit('s');
     setScheduledTimes([]);
   };
 
@@ -246,16 +249,28 @@ const TaskRunner = () => {
           )}
 
           {runMode !== 'scheduled' && (
-            <TextField
-              fullWidth
-              label="循環間隔 (秒)"
-              type="number"
-              value={loopInterval}
-              onChange={(e) => setLoopInterval(Math.max(0, parseInt(e.target.value) || 0))}
-              sx={{ mt: 2 }}
-              helperText="每次執行完成後等待的時間"
-              slotProps={{ htmlInput: { min: 0 } }}
-            />
+            <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
+              <TextField
+                fullWidth
+                label="循環間隔"
+                type="number"
+                value={loopInterval}
+                onChange={(e) => setLoopInterval(Math.max(0, parseFloat(e.target.value) || 0))}
+                helperText="每次執行完成後等待的時間"
+                slotProps={{ htmlInput: { min: 0, step: loopIntervalUnit === 'ms' ? 1 : 0.1 } }}
+              />
+              <FormControl sx={{ minWidth: 100 }}>
+                <InputLabel>單位</InputLabel>
+                <Select
+                  value={loopIntervalUnit}
+                  onChange={(e) => setLoopIntervalUnit(e.target.value as 's' | 'ms')}
+                  label="單位"
+                >
+                  <MenuItem value="s">秒 (s)</MenuItem>
+                  <MenuItem value="ms">毫秒 (ms)</MenuItem>
+                </Select>
+              </FormControl>
+            </Stack>
           )}
         </DialogContent>
         <DialogActions>

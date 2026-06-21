@@ -676,6 +676,35 @@ if __name__ == "__main__":
     conn = db.init_db()
     add_log("🚀 Game Bot API Server 啟動中...")
 
+    # 啟動全域熱鍵監聽
+    try:
+        from pynput import keyboard
+        def on_press(key):
+            if key == keyboard.Key.esc:
+                # 暫停所有執行中的腳本
+                paused_any = False
+                for jid, entry in active_runners.items():
+                    runner = entry["runner"]
+                    if runner.running and not runner.paused:
+                        runner.toggle_pause()
+                        # 更新 DB 狀態
+                        db.task_toggle(conn, jid)
+                        add_log(f"⏸️ 熱鍵觸發: 已暫停任務", source="system", job_id=jid)
+                        paused_any = True
+                
+                if paused_any:
+                    print("\n[HotKey] 已暫停所有任務 (ESC)")
+                    add_log("⏸️ 接收到 ESC 按鍵，已暫停所有執行中的任務", level="warning")
+
+        listener = keyboard.Listener(on_press=on_press)
+        listener.daemon = True
+        listener.start()
+        add_log("⌨️  全域熱鍵已啟動 (ESC: 暫停所有任務)")
+    except ImportError:
+        add_log("⚠️  pynput 未安裝，無法使用全域熱鍵功能 (請執行 pip install pynput)")
+    except Exception as e:
+        add_log(f"⚠️  全域熱鍵啟動失敗: {e}")
+
     app = create_app()
     print("=" * 50)
     print("  Game Bot Python API Server")
