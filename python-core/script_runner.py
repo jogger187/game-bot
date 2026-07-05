@@ -71,6 +71,10 @@ class ScriptRunner:
         else:
             self.desktop_controller = None
 
+        # 持久化 shell（快速點擊用）
+        self._shell_proc = None
+        self._touch_device = None  # 例: /dev/input/event3
+
     def _check_pause(self):
         """檢查緊急暫停 + 個別暫停，阻塞直到恢復"""
         # 先檢查全域緊急暫停
@@ -119,14 +123,77 @@ class ScriptRunner:
         except Exception:
             return b""
 
+    def _get_touch_device(self) -> str | None:
+        """自動偵測觸控設備路徑（有 ABS_MT_POSITION_X 的 event）"""
+        output = self.adb("shell", "getevent", "-pl")
+        current_dev = None
+        for line in output.splitlines():
+            line = line.strip()
+            if line.startswith("add device"):
+                current_dev = line.split(": ", 1)[-1].strip()
+            elif "ABS_MT_POSITION_X" in line and current_dev:
+                return current_dev
+        return None
+
+    def _ensure_shell(self):
+        """確保持久化 shell 存在且存活"""
+        if self._shell_proc and self._shell_proc.poll() is None:
+            return True
+        try:
+            self._shell_proc = subprocess.Popen(
+                [adbutils.adb_path(), "-s", self.serial, "shell"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return True
+        except Exception:
+            self._shell_proc = None
+            return False
+
+    def _shell_write(self, cmd: str):
+        """向持久化 shell 寫入指令"""
+        if self._shell_proc and self._shell_proc.poll() is None:
+            try:
+                self._shell_proc.stdin.write((cmd + "\n").encode())
+                self._shell_proc.stdin.flush()
+            except Exception:
+                self._shell_proc = None
+
+    def _sendevent_tap(self, x: int, y: int):
+        """
+        用 sendevent 直接寫 kernel 觸控事件，比 input tap 快 10x。
+        繞過 Android input.jar JVM，延遲約 10~30ms。
+        """
+        if not self._touch_device:
+            self._touch_device = self._get_touch_device()
+        if not self._touch_device:
+            return False  # 找不到設備，fallback
+
+        dev = self._touch_device
+        # Multi-touch protocol type B
+        cmds = (
+            f"sendevent {dev} 3 57 1\n"   # ABS_MT_TRACKING_ID = 1
+            f"sendevent {dev} 3 53 {x}\n" # ABS_MT_POSITION_X
+            f"sendevent {dev} 3 54 {y}\n" # ABS_MT_POSITION_Y
+            f"sendevent {dev} 0 0 0\n"    # SYN_REPORT (finger down)
+            f"sendevent {dev} 3 57 -1\n"  # ABS_MT_TRACKING_ID = -1 (lift)
+            f"sendevent {dev} 0 0 0\n"    # SYN_REPORT (finger up)
+        )
+        if not self._ensure_shell():
+            return False
+        self._shell_write(cmds)
+        return True
+
     def tap(self, x: int, y: int, hold_ms: int = 0):
         """點擊座標"""
         if self.is_desktop:
             self.desktop_controller.tap(x, y, hold_ms)
+        elif hold_ms > 0:
+            self.adb("shell", "input", "swipe", str(x), str(y), str(x), str(y), str(hold_ms))
         else:
-            if hold_ms > 0:
-                self.adb("shell", "input", "swipe", str(x), str(y), str(x), str(y), str(hold_ms))
-            else:
+            # 嘗試 sendevent 快速點擊，失敗則 fallback 到 input tap
+            if not self._sendevent_tap(x, y):
                 self.adb("shell", "input", "tap", str(x), str(y))
 
     def swipe(self, x1: int, y1: int, x2: int, y2: int, duration: int = 300):
