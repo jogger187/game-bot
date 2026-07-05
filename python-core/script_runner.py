@@ -93,14 +93,36 @@ class ScriptRunner:
         entry = f"[{ts}] {msg}"
         self.on_log(entry)
 
+    def _precise_sleep(self, seconds: float) -> bool:
+        """
+        高精度計時 sleep（精度 ±1ms）
+        - 前段：小片段 OS sleep，支援暫停檢查 + 節省 CPU
+        - 後 2ms：忙等待（busy-wait）確保終點精度
+        """
+        deadline = time.perf_counter() + seconds
+        # 前段：片段 sleep（每片最多 50ms，支援暫停）
+        while True:
+            remaining = deadline - time.perf_counter()
+            if remaining <= 0.002:  # 進入忙等待階段
+                break
+            chunk = min(remaining - 0.002, 0.05)
+            time.sleep(chunk)
+            if not self.running:
+                return False
+            if self.paused or _emergency_paused.is_set():
+                if not self._check_pause():
+                    return False
+                # 暫停後重置 deadline（暫停期間不計入等待時間）
+                deadline = time.perf_counter() + (deadline - time.perf_counter())
+        # 後 2ms： busy-wait 精准目標
+        while time.perf_counter() < deadline:
+            if not self.running:
+                return False
+        return self.running
+
     def _sleep_with_pause(self, seconds: float) -> bool:
         """可被暫停打斷的 sleep，回傳是否應繼續執行"""
-        end_time = time.time() + seconds
-        while time.time() < end_time and self.running:
-            if not self._check_pause():
-                return False
-            time.sleep(min(0.1, max(0, end_time - time.time())))
-        return self.running
+        return self._precise_sleep(seconds)
 
     # ═══════════════════════════════════════════
     #  ADB 工具
@@ -375,16 +397,23 @@ class ScriptRunner:
             # 隨機偏移（防檢測）
             dx = random.randint(-rand_range, rand_range)
             dy = random.randint(-rand_range, rand_range)
+            tx, ty = x + dx, y + dy
+
+            interval_sec = repeat_interval / 1000.0
+            loop_start = time.perf_counter()  # 記錄這次循環開始時間
 
             for i in range(repeat):
                 if not self._check_pause():
                     return "default"
-                tx, ty = x + dx, y + dy
                 self.log(f"👆 點擊 ({tx}, {ty}){f' 長按{hold_ms}ms' if hold_ms > 0 else ''}")
                 self.tap(tx, ty, hold_ms)
                 if i < repeat - 1:
-                    if not self._sleep_with_pause(repeat_interval / 1000.0):
-                        return "default"
+                    # 絕對時間補償：不用累積誤差，每次以起始點計算下次觸發時刻
+                    next_deadline = loop_start + (i + 1) * interval_sec
+                    sleep_dur = next_deadline - time.perf_counter()
+                    if sleep_dur > 0:
+                        if not self._precise_sleep(sleep_dur):
+                            return "default"
 
             return "default"
 
