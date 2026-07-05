@@ -145,7 +145,7 @@ class ScriptRunner:
         except Exception:
             return b""
 
-    def _get_touch_device(self) -> str | None:
+    def _get_touch_device(self):
         """自動偵測觸控設備路徑（有 ABS_MT_POSITION_X 的 event）"""
         output = self.adb("shell", "getevent", "-pl")
         current_dev = None

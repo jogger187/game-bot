@@ -48,7 +48,8 @@ def add_log(msg: str, level: str = "info", source: str = "system", job_id=None):
 
 def run_adb(*args, serial=None):
     """執行 ADB 命令"""
-    cmd = ["adb"]
+    import adbutils
+    cmd = [adbutils.adb_path()]
     if serial:
         cmd.extend(["-s", serial])
     cmd.extend(args)
