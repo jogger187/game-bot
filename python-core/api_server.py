@@ -85,7 +85,13 @@ async def cors_middleware(request, handler):
 #  裝置 API
 # ═══════════════════════════════════════════
 async def device_list(request):
-    """列出所有 ADB 裝置"""
+    """列出所有 ADB 裝置（含自動探測常見模擬器）"""
+    # 背景自動嘗試連接常見模擬器 Port
+    # 5555 (BlueStacks/LDPlayer預設), 62001/62025 (Nox), 7555/16384 (MuMu)
+    common_ports = [5555, 62001, 62025, 7555, 16384]
+    for port in common_ports:
+        run_adb("connect", f"127.0.0.1:{port}")
+
     output = run_adb("devices")
     devices = []
     for line in output.splitlines()[1:]:

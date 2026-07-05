@@ -212,26 +212,27 @@ const Dashboard = () => {
         </DialogTitle>
         <DialogContent sx={{ p: 0 }}>
           <Tabs value={pickerTab} onChange={(_, v) => setPickerTab(v)} sx={{ px: 2, borderBottom: 1, borderColor: 'divider' }}>
-            <Tab label="Android 裝置" icon={<PhoneAndroidIcon />} iconPosition="start" sx={{ minHeight: 48 }} />
+            <Tab label="實體手機" icon={<SmartphoneIcon />} iconPosition="start" sx={{ minHeight: 48 }} />
+            <Tab label="模擬器" icon={<ComputerIcon />} iconPosition="start" sx={{ minHeight: 48 }} />
             <Tab label="桌面應用" icon={<DesktopWindowsIcon />} iconPosition="start" sx={{ minHeight: 48 }} />
           </Tabs>
 
-          {/* ADB 裝置分頁 */}
+          {/* 實體手機分頁 */}
           {pickerTab === 0 && (
             loadingDevices ? (
               <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
                 <CircularProgress />
               </Box>
-            ) : devicesList.length === 0 ? (
+            ) : devicesList.filter(d => !d.serial.includes('emulator') && !d.serial.includes('127.0.0.1') && !d.serial.includes(':')).length === 0 ? (
               <Box sx={{ textAlign: 'center', p: 4 }}>
-                <Typography color="text.secondary">找不到可用裝置</Typography>
+                <Typography color="text.secondary">找不到實體手機</Typography>
                 <Typography variant="caption" color="text.secondary">
-                  請確認模擬器已啟動或手機已透過 USB 連接
+                  請確認手機已開啟 USB 偵錯並連接至電腦
                 </Typography>
               </Box>
             ) : (
               <List sx={{ px: 2, py: 1 }}>
-                {devicesList.map((d) => (
+                {devicesList.filter(d => !d.serial.includes('emulator') && !d.serial.includes('127.0.0.1') && !d.serial.includes(':')).map((d) => (
                   <ListItemButton
                     key={d.serial}
                     onClick={() => selectDevice(d.serial)}
@@ -240,7 +241,44 @@ const Dashboard = () => {
                       '&:hover': { borderColor: 'primary.main', bgcolor: 'rgba(99,102,241,0.08)' },
                     }}
                   >
-                    <ListItemIcon>{getDeviceIcon(d.serial)}</ListItemIcon>
+                    <ListItemIcon><SmartphoneIcon sx={{ color: '#10b981' }} /></ListItemIcon>
+                    <ListItemText
+                      primary={d.serial}
+                      secondary="實體手機 (USB)"
+                      slotProps={{ primary: { sx: { fontFamily: 'monospace', fontWeight: 'bold' } } }}
+                    />
+                    <Chip label={d.status} size="small" color="success" variant="outlined" />
+                  </ListItemButton>
+                ))}
+              </List>
+            )
+          )}
+
+          {/* 模擬器分頁 */}
+          {pickerTab === 1 && (
+            loadingDevices ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+                <CircularProgress />
+              </Box>
+            ) : devicesList.filter(d => d.serial.includes('emulator') || d.serial.includes('127.0.0.1') || d.serial.includes(':')).length === 0 ? (
+              <Box sx={{ textAlign: 'center', p: 4 }}>
+                <Typography color="text.secondary">找不到模擬器</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  請確認模擬器已啟動且開啟了 ADB 偵錯
+                </Typography>
+              </Box>
+            ) : (
+              <List sx={{ px: 2, py: 1 }}>
+                {devicesList.filter(d => d.serial.includes('emulator') || d.serial.includes('127.0.0.1') || d.serial.includes(':')).map((d) => (
+                  <ListItemButton
+                    key={d.serial}
+                    onClick={() => selectDevice(d.serial)}
+                    sx={{
+                      border: '1px solid', borderColor: 'divider', borderRadius: 1, mb: 1,
+                      '&:hover': { borderColor: 'primary.main', bgcolor: 'rgba(99,102,241,0.08)' },
+                    }}
+                  >
+                    <ListItemIcon><ComputerIcon sx={{ color: '#6366f1' }} /></ListItemIcon>
                     <ListItemText
                       primary={d.serial}
                       secondary={getDeviceLabel(d.serial)}
@@ -254,7 +292,7 @@ const Dashboard = () => {
           )}
 
           {/* 桌面視窗分頁 */}
-          {pickerTab === 1 && (
+          {pickerTab === 2 && (
             loadingWindows ? (
               <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
                 <CircularProgress />
