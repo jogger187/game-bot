@@ -7,10 +7,12 @@ log, random_delay, ocr, pixel_check
 import asyncio
 import json
 import subprocess
+import adbutils
 import time
 import random
 import base64
 import io
+import threading
 from pathlib import Path
 from datetime import datetime
 
@@ -24,6 +26,28 @@ except ImportError:
 
 PROJECT_ROOT = Path(__file__).parent.parent
 ASSETS_DIR = PROJECT_ROOT / "assets"
+
+# ═══════════════════════════════════════════
+#  全域緊急暫停旗標
+#  ESC 按下 → set()，所有 runner 立刻暫停
+#  恢復時 → clear()
+# ═══════════════════════════════════════════
+_emergency_paused = threading.Event()  # set() = 暫停中
+
+
+def emergency_pause():
+    """觸發全域緊急暫停"""
+    _emergency_paused.set()
+
+
+def emergency_resume():
+    """解除全域緊急暫停"""
+    _emergency_paused.clear()
+
+
+def is_emergency_paused() -> bool:
+    """查詢是否處於緊急暫停狀態"""
+    return _emergency_paused.is_set()
 
 
 class ScriptRunner:
@@ -47,18 +71,39 @@ class ScriptRunner:
         else:
             self.desktop_controller = None
 
+    def _check_pause(self):
+        """檢查緊急暫停 + 個別暫停，阻塞直到恢復"""
+        # 先檢查全域緊急暫停
+        if _emergency_paused.is_set():
+            if not self.paused:
+                self.paused = True
+                self.log("⏸️ 緊急暫停觸發")
+        # 等待暫停解除
+        while (self.paused or _emergency_paused.is_set()) and self.running:
+            time.sleep(0.1)  # 100ms 輪詢，按 ESC 後最多 100ms 內反應
+        return self.running  # False = 被 stop 了，應該退出
+
     def log(self, msg: str):
         """記錄日誌"""
         ts = datetime.now().strftime("%H:%M:%S")
         entry = f"[{ts}] {msg}"
         self.on_log(entry)
 
+    def _sleep_with_pause(self, seconds: float) -> bool:
+        """可被暫停打斷的 sleep，回傳是否應繼續執行"""
+        end_time = time.time() + seconds
+        while time.time() < end_time and self.running:
+            if not self._check_pause():
+                return False
+            time.sleep(min(0.1, max(0, end_time - time.time())))
+        return self.running
+
     # ═══════════════════════════════════════════
     #  ADB 工具
     # ═══════════════════════════════════════════
     def adb(self, *args) -> str:
         """執行 ADB 命令"""
-        cmd = ["adb", "-s", self.serial] + list(args)
+        cmd = [adbutils.adb_path(), "-s", self.serial] + list(args)
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
             return result.stdout.strip()
@@ -67,7 +112,7 @@ class ScriptRunner:
 
     def adb_raw(self, *args) -> bytes:
         """執行 ADB 命令（返回原始 bytes）"""
-        cmd = ["adb", "-s", self.serial] + list(args)
+        cmd = [adbutils.adb_path(), "-s", self.serial] + list(args)
         try:
             result = subprocess.run(cmd, capture_output=True, timeout=15)
             return result.stdout
@@ -146,7 +191,7 @@ class ScriptRunner:
 
         start_time = time.time()
         while time.time() - start_time < timeout:
-            if not self.running:
+            if not self._check_pause():
                 return {"found": False}
 
             screen = self.screenshot_cv()
@@ -226,12 +271,16 @@ class ScriptRunner:
             self.log(f"⏳ 等待圖片: {template} (超時{timeout}s)")
             start = time.time()
             while time.time() - start < timeout and self.running:
+                if not self._check_pause():
+                    return "false"
                 result = self.find_template(template, threshold, timeout=2)
                 if result["found"]:
                     self._last_match_pos = (result["x"], result["y"])
                     self.log(f"  ✅ 圖片出現! ({result['x']}, {result['y']})")
                     return "true"
-                time.sleep(interval)
+                # 未找到則等待
+                if not self._sleep_with_pause(interval):
+                    return "not_found"
 
             self.log(f"  ⏰ 等待超時")
             return "false"
@@ -261,11 +310,14 @@ class ScriptRunner:
             dy = random.randint(-rand_range, rand_range)
 
             for i in range(repeat):
+                if not self._check_pause():
+                    return "default"
                 tx, ty = x + dx, y + dy
                 self.log(f"👆 點擊 ({tx}, {ty}){f' 長按{hold_ms}ms' if hold_ms > 0 else ''}")
                 self.tap(tx, ty, hold_ms)
                 if i < repeat - 1:
-                    time.sleep(repeat_interval / 1000.0)
+                    if not self._sleep_with_pause(repeat_interval / 1000.0):
+                        return "default"
 
             return "default"
 
@@ -279,8 +331,8 @@ class ScriptRunner:
 
         elif node_type == "wait":
             ms = data.get("ms", 1000)
-            self.log(f"⏱️ 等待 {ms}ms")
-            time.sleep(ms / 1000.0)
+            self.log(f"⏳ 等待 {ms}ms")
+            self._sleep_with_pause(ms / 1000.0)
             return "default"
 
         elif node_type == "type_text":
@@ -340,8 +392,8 @@ class ScriptRunner:
             min_ms = data.get("min_ms", 500)
             max_ms = data.get("max_ms", 2000)
             delay = random.randint(min_ms, max_ms)
-            self.log(f"🎲 隨機延遲: {delay}ms")
-            time.sleep(delay / 1000.0)
+            self.log(f"⏳ Loop 等待 {delay}ms...")
+            self._sleep_with_pause(delay / 1000.0)
             return "default"
 
         elif node_type == "ocr":
@@ -423,9 +475,9 @@ class ScriptRunner:
                 self.log(f"❌ 節點不存在: {current_id}")
                 break
 
-            # 暫停處理
-            while self.paused and self.running:
-                time.sleep(0.5)
+            # 每個節點執行前檢查緊急暫停
+            if not self._check_pause():
+                break
 
             # 執行節點
             output_port = self.execute_node(node)
@@ -453,6 +505,10 @@ class ScriptRunner:
 
         try:
             while self.running:
+                # 每輪開始前也檢查緊急暫停
+                if not self._check_pause():
+                    break
+
                 self.run_count += 1
                 self.log(f"\n{'='*40}")
                 self.log(f"🔄 第 {self.run_count} 次執行")
@@ -469,7 +525,12 @@ class ScriptRunner:
 
                 if self.running:
                     self.log(f"⏳ 等待 {interval}s 後開始下一輪...")
-                    time.sleep(interval)
+                    # 用細粒度 sleep 替代一次性 sleep，讓暫停能即時響應
+                    wait_end = time.time() + interval
+                    while time.time() < wait_end and self.running:
+                        if _emergency_paused.is_set():
+                            self._check_pause()
+                        time.sleep(0.1)
         except Exception as e:
             self.log(f"❌ 執行錯誤: {e}")
         finally:

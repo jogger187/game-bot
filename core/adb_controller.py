@@ -232,16 +232,19 @@ class AdbController:
     def _safe_shell(self, cmd: str) -> None:
         """安全執行 shell 指令，改用原生 subprocess 避免 BlueStacks 斷線"""
         import subprocess
+        import adbutils
         if not self.device:
             return
         try:
             # 直接使用原生 adb 指令，最穩定
-            subprocess.run(
-                ["adb", "-s", self.device.serial, "shell"] + cmd.split(),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+            result = subprocess.run(
+                [adbutils.adb_path(), "-s", self.device.serial, "shell", cmd],
+                capture_output=True,
+                text=True,
                 timeout=5
             )
+            if result.returncode != 0:
+                logger.error(f"ADB command failed: {cmd}\n{result.stderr}")
         except Exception as e:
             logger.warning(f"ADB subprocess error: {e}")
 

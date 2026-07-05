@@ -14,7 +14,7 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-# User specific data
+# User specific data (runtime / personal)
 logs/
 assets/
 scripts/
@@ -24,9 +24,14 @@ scripts.json
 *.db
 *.db-shm
 *.db-wal
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
 data/*.db
 data/*.db-shm
 data/*.db-wal
+data/*.bak
+data/*.sql
 
 # IDE
 .vscode/
@@ -41,3 +46,6 @@ frontend/node_modules/
 frontend/src-tauri/target/
 frontend/src-tauri/icons/*.png
 frontend/src-tauri/icons/*.ico
+
+# Generated / local only
+requirements.txt

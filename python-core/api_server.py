@@ -434,7 +434,7 @@ async def api_script_delete(request):
 #  任務執行 API — 使用 SQLite 持久化
 # ═══════════════════════════════════════════
 import threading
-from script_runner import ScriptRunner
+from script_runner import ScriptRunner, emergency_pause, emergency_resume, is_emergency_paused
 
 # 執行中的 runner 實例（記憶體中保存，用於控制執行緒）
 active_runners = {}
@@ -447,7 +447,7 @@ async def api_task_start(request):
     script_name = data.get("script_name", "")
     run_mode = data.get("run_mode", "loop")
     max_runs = data.get("max_runs", 0)
-    loop_interval = data.get("loop_interval", 3)
+    loop_interval = max(0.1, data.get("loop_interval", 3))  # 最低 100ms
     scheduled_times = data.get("scheduled_times", [])  # 每日定時觸發的時間點列表
 
     if not device_state["connected"]:
@@ -576,6 +576,39 @@ async def api_task_remove(request):
     add_log(f"🗑️ 已移除任務: {name} (job={job_id})", source="task")
     return web.json_response({"ok": True})
 
+# ═══════════════════════════════════════════
+#  緊急暫停 API
+# ═══════════════════════════════════════════
+async def api_emergency_status(request):
+    """取得緊急暫停狀態"""
+    return web.json_response({"emergency_paused": is_emergency_paused()})
+
+
+async def api_emergency_pause(request):
+    """觸發緊急暫停"""
+    emergency_pause()
+    # 同步更新所有 runner 的 paused 狀態
+    for jid, entry in active_runners.items():
+        runner = entry["runner"]
+        if runner.running and not runner.paused:
+            runner.paused = True
+            db.task_toggle(conn, jid)
+    add_log("⏸️ 緊急暫停已觸發（所有任務已暫停）", level="warning")
+    return web.json_response({"emergency_paused": True})
+
+
+async def api_emergency_resume(request):
+    """解除緊急暫停"""
+    emergency_resume()
+    # 同步恢復所有 runner
+    for jid, entry in active_runners.items():
+        runner = entry["runner"]
+        if runner.running and runner.paused:
+            runner.paused = False
+            db.task_toggle(conn, jid)
+    add_log("▶️ 緊急暫停已解除（所有任務已恢復）")
+    return web.json_response({"emergency_paused": False})
+
 
 # ═══════════════════════════════════════════
 #  日誌 API — 使用 SQLite
@@ -650,6 +683,11 @@ def create_app():
     app.router.add_get("/api/settings", api_settings_get)
     app.router.add_put("/api/settings", api_settings_set)
 
+    # 緊急暫停
+    app.router.add_get("/api/emergency", api_emergency_status)
+    app.router.add_post("/api/emergency/pause", api_emergency_pause)
+    app.router.add_post("/api/emergency/resume", api_emergency_resume)
+
     return app
 
 
@@ -665,6 +703,11 @@ if __name__ == "__main__":
                 entry["runner"].stop()
             except Exception:
                 pass
+        # flush 日誌緩衝區
+        try:
+            db.log_flush(conn)
+        except Exception:
+            pass
         # 清除 desktop controller cache
         _clear_desktop_cache()
         sys.exit(0)
@@ -681,20 +724,26 @@ if __name__ == "__main__":
         from pynput import keyboard
         def on_press(key):
             if key == keyboard.Key.esc:
-                # 暫停所有執行中的腳本
-                paused_any = False
-                for jid, entry in active_runners.items():
-                    runner = entry["runner"]
-                    if runner.running and not runner.paused:
-                        runner.toggle_pause()
-                        # 更新 DB 狀態
-                        db.task_toggle(conn, jid)
-                        add_log(f"⏸️ 熱鍵觸發: 已暫停任務", source="system", job_id=jid)
-                        paused_any = True
-                
-                if paused_any:
+                if is_emergency_paused():
+                    # 已經是暫停狀態 → 恢復
+                    emergency_resume()
+                    for jid, entry in active_runners.items():
+                        runner = entry["runner"]
+                        if runner.running and runner.paused:
+                            runner.paused = False
+                            db.task_toggle(conn, jid)
+                    print("\n[HotKey] 已恢復所有任務 (ESC)")
+                    add_log("▶️ ESC 解除緊急暫停，所有任務已恢復")
+                else:
+                    # 觸發緊急暫停
+                    emergency_pause()
+                    for jid, entry in active_runners.items():
+                        runner = entry["runner"]
+                        if runner.running and not runner.paused:
+                            runner.paused = True
+                            db.task_toggle(conn, jid)
                     print("\n[HotKey] 已暫停所有任務 (ESC)")
-                    add_log("⏸️ 接收到 ESC 按鍵，已暫停所有執行中的任務", level="warning")
+                    add_log("⏸️ ESC 緊急暫停，所有任務已暫停", level="warning")
 
         listener = keyboard.Listener(on_press=on_press)
         listener.daemon = True

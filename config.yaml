@@ -5,7 +5,7 @@
 # 設備設定
 device:
   mode: "adb"              # adb | minicap | emulator | desktop
-  serial: "127.0.0.1:5555" # BlueStacks
+  serial: ""                # 留空讓前端手動選擇裝置
   emulator:
     type: "auto"           # auto | mumu | ldplayer | bluestacks | nox | memu
     install_path: null     # 自動偵測

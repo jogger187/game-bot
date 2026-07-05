@@ -43,7 +43,7 @@ const TaskRunner = () => {
   const handleStart = async () => {
     const script = scripts.find((s) => s.id === selectedScript);
     if (!script) return;
-    const finalInterval = loopIntervalUnit === 'ms' ? loopInterval / 1000 : loopInterval;
+    const finalInterval = Math.max(0.1, loopIntervalUnit === 'ms' ? loopInterval / 1000 : loopInterval);
     await startTask(script.id, script.name, runMode, maxRuns, finalInterval, scheduledTimes);
     setLaunchOpen(false);
     setSelectedScript('');
@@ -255,9 +255,12 @@ const TaskRunner = () => {
                 label="循環間隔"
                 type="number"
                 value={loopInterval}
-                onChange={(e) => setLoopInterval(Math.max(0, parseFloat(e.target.value) || 0))}
-                helperText="每次執行完成後等待的時間"
-                slotProps={{ htmlInput: { min: 0, step: loopIntervalUnit === 'ms' ? 1 : 0.1 } }}
+                onChange={(e) => {
+                  const min = loopIntervalUnit === 'ms' ? 100 : 0.1;
+                  setLoopInterval(Math.max(min, parseFloat(e.target.value) || min));
+                }}
+                helperText={`最低 ${loopIntervalUnit === 'ms' ? '100ms' : '0.1s'}（截圖 + 模板匹配的硬體下限）`}
+                slotProps={{ htmlInput: { min: loopIntervalUnit === 'ms' ? 100 : 0.1, step: loopIntervalUnit === 'ms' ? 10 : 0.1 } }}
               />
               <FormControl sx={{ minWidth: 100 }}>
                 <InputLabel>單位</InputLabel>
