@@ -39,17 +39,17 @@ def get_connection() -> sqlite3.Connection:
 
 
 def init_db(conn: Optional[sqlite3.Connection] = None) -> sqlite3.Connection:
-    """初始化資料庫（執行 migration SQL）"""
+    """初始化資料庫（依序執行所有 migration SQL）"""
     if conn is None:
         conn = get_connection()
 
-    migration_file = MIGRATIONS_DIR / "001_init.sql"
-    if migration_file.exists():
-        sql = migration_file.read_text("utf-8")
-        conn.executescript(sql)
-        print(f"✅ 資料庫初始化完成: {DB_PATH}")
+    if MIGRATIONS_DIR.exists():
+        for mig_file in sorted(MIGRATIONS_DIR.glob("*.sql")):
+            sql = mig_file.read_text("utf-8")
+            conn.executescript(sql)
+            print(f"✅ 已執行 migration: {mig_file.name}")
     else:
-        print(f"⚠️ 找不到 migration 檔案: {migration_file}")
+        print(f"⚠️ 找不到 migrations 目錄: {MIGRATIONS_DIR}")
 
     return conn
 
@@ -495,3 +495,79 @@ def asset_list(conn: sqlite3.Connection) -> list[dict]:
     with _db_lock:
         rows = conn.execute("SELECT * FROM assets ORDER BY name").fetchall()
     return [{"name": r["name"], "size": r["file_size"]} for r in rows]
+
+
+# ═══════════════════════════════════════════
+#  錄製記錄 CRUD
+# ═══════════════════════════════════════════
+
+def recording_create(
+    conn: sqlite3.Connection,
+    name: str,
+    actions: list[dict],
+    duration_ms: int = 0,
+    script_id: Optional[str] = None,
+) -> dict:
+    """建立新錄製記錄"""
+    now = _now_iso()
+    rec_id = str(uuid.uuid4())
+
+    with _db_lock:
+        conn.execute(
+            """INSERT INTO recordings (id, script_id, name, actions, duration_ms, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (rec_id, script_id, name, json.dumps(actions), duration_ms, now),
+        )
+        conn.commit()
+    return recording_get(conn, rec_id)
+
+
+def recording_get(conn: sqlite3.Connection, rec_id: str) -> Optional[dict]:
+    """依 ID 取得錄製記錄"""
+    with _db_lock:
+        row = conn.execute(
+            "SELECT * FROM recordings WHERE id = ?", (rec_id,)
+        ).fetchone()
+    if not row:
+        return None
+    return {
+        "id": row["id"],
+        "script_id": row["script_id"] or "",
+        "name": row["name"],
+        "actions": json.loads(row["actions"]),
+        "duration_ms": row["duration_ms"],
+        "created_at": row["created_at"],
+    }
+
+
+def recording_list(conn: sqlite3.Connection, script_id: Optional[str] = None) -> list[dict]:
+    """取得錄製記錄列表"""
+    with _db_lock:
+        if script_id:
+            rows = conn.execute(
+                "SELECT * FROM recordings WHERE script_id = ? ORDER BY created_at DESC",
+                (script_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM recordings ORDER BY created_at DESC"
+            ).fetchall()
+    return [
+        {
+            "id": r["id"],
+            "script_id": r["script_id"] or "",
+            "name": r["name"],
+            "actions": json.loads(r["actions"]),
+            "duration_ms": r["duration_ms"],
+            "created_at": r["created_at"],
+        }
+        for r in rows
+    ]
+
+
+def recording_delete(conn: sqlite3.Connection, rec_id: str) -> None:
+    """刪除錄製記錄"""
+    with _db_lock:
+        conn.execute("DELETE FROM recordings WHERE id = ?", (rec_id,))
+        conn.commit()
+

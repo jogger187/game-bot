@@ -4,6 +4,7 @@ import {
   Box, Paper, Typography, Button, TextField, List, ListItemButton,
   ListItemText, IconButton, Divider, Dialog, DialogTitle, DialogContent,
   DialogActions, Tooltip, Accordion, AccordionSummary, AccordionDetails,
+  Tabs, Tab,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import SaveIcon from '@mui/icons-material/Save';
@@ -19,6 +20,7 @@ import { useAppStore } from '../stores/appStore';
 import { NODE_MODULES, type Script, type ScriptNodeType, type NodeModuleDef } from '../types/script';
 import ScriptNodeComponent from '../components/ScriptNode';
 import NodePropertiesPanel from '../components/NodePropertiesPanel';
+import LiveRecorder from '../components/LiveRecorder';
 
 // 註冊自訂節點類型
 const nodeTypes = { custom: ScriptNodeComponent };
@@ -46,6 +48,7 @@ const ScriptEditor = () => {
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [createOpen, setCreateOpen] = useState(false);
   const [newName, setNewName] = useState('');
+  const [activeTab, setActiveTab] = useState(0);
 
   useEffect(() => { fetchScripts(); fetchAssets(); }, [fetchScripts, fetchAssets]);
 
@@ -232,37 +235,65 @@ const ScriptEditor = () => {
         )}
       </Paper>
 
-      {/* ══════ 中間：React Flow 編輯區 ══════ */}
-      <Box sx={{ flex: 1, position: 'relative' }}>
+      {/* ══════ 中間：編輯區 (分頁籤) ══════ */}
+      <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
         {selected ? (
           <>
-            {/* 頂部工具列 */}
-            <Box sx={{ position: 'absolute', top: 12, right: 12, zIndex: 10, display: 'flex', gap: 1 }}>
-              {selectedNodeId && (selectedNode?.data as Record<string, unknown>)?.node_type !== 'start'
-                && (selectedNode?.data as Record<string, unknown>)?.node_type !== 'end' && (
-                <Button size="small" variant="contained" color="error" onClick={deleteSelectedNode}>
-                  🗑 刪除節點
-                </Button>
-              )}
-              <Button size="small" variant="contained" color="success" startIcon={<SaveIcon />} onClick={handleSave}>
-                儲存
-              </Button>
-            </Box>
-
-            <ReactFlow
-              nodes={nodes} edges={edges}
-              onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
-              onConnect={onConnect}
-              onNodeClick={onNodeClick}
-              onPaneClick={onPaneClick}
-              nodeTypes={nodeTypes}
-              fitView
-              style={{ background: '#0f172a' }}
+            {/* Tab 切換 */}
+            <Tabs
+              value={activeTab}
+              onChange={(_, v) => setActiveTab(v)}
+              sx={{
+                minHeight: 36,
+                borderBottom: '1px solid',
+                borderColor: 'divider',
+                bgcolor: '#0f172a',
+                '& .MuiTab-root': { minHeight: 36, fontSize: 13, py: 0 },
+              }}
             >
-              <Controls />
-              <MiniMap style={{ background: '#1e293b' }} />
-              <Background color="#334155" gap={20} />
-            </ReactFlow>
+              <Tab label="🧩 方塊編輯" />
+              <Tab label="📹 即時錄製" />
+            </Tabs>
+
+            {/* Tab 0: React Flow 編輯器 */}
+            {activeTab === 0 && (
+              <Box sx={{ flex: 1, position: 'relative' }}>
+                {/* 頂部工具列 */}
+                <Box sx={{ position: 'absolute', top: 12, right: 12, zIndex: 10, display: 'flex', gap: 1 }}>
+                  {selectedNodeId && (selectedNode?.data as Record<string, unknown>)?.node_type !== 'start'
+                    && (selectedNode?.data as Record<string, unknown>)?.node_type !== 'end' && (
+                    <Button size="small" variant="contained" color="error" onClick={deleteSelectedNode}>
+                      🗑 刪除節點
+                    </Button>
+                  )}
+                  <Button size="small" variant="contained" color="success" startIcon={<SaveIcon />} onClick={handleSave}>
+                    儲存
+                  </Button>
+                </Box>
+
+                <ReactFlow
+                  nodes={nodes} edges={edges}
+                  onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
+                  onConnect={onConnect}
+                  onNodeClick={onNodeClick}
+                  onPaneClick={onPaneClick}
+                  nodeTypes={nodeTypes}
+                  fitView
+                  style={{ background: '#0f172a' }}
+                >
+                  <Controls />
+                  <MiniMap style={{ background: '#1e293b' }} />
+                  <Background color="#334155" gap={20} />
+                </ReactFlow>
+              </Box>
+            )}
+
+            {/* Tab 1: 即時錄製 */}
+            {activeTab === 1 && (
+              <Box sx={{ flex: 1 }}>
+                <LiveRecorder scriptId={selectedId} />
+              </Box>
+            )}
           </>
         ) : (
           <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
@@ -271,8 +302,8 @@ const ScriptEditor = () => {
         )}
       </Box>
 
-      {/* ══════ 右側：屬性面板 ══════ */}
-      {selected && (
+      {/* ══════ 右側：屬性面板 (只在方塊編輯模式顯示) ══════ */}
+      {selected && activeTab === 0 && (
         <Paper sx={{ width: 280, borderRadius: 0, borderLeft: '1px solid', borderColor: 'divider', overflow: 'hidden' }}>
           {selectedNode ? (
             <NodePropertiesPanel

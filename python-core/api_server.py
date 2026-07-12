@@ -442,6 +442,7 @@ async def api_script_delete(request):
 # ═══════════════════════════════════════════
 import threading
 from script_runner import ScriptRunner, emergency_pause, emergency_resume, is_emergency_paused
+from stream_server import ws_stream_handler
 
 # 執行中的 runner 實例（記憶體中保存，用於控制執行緒）
 active_runners = {}
@@ -695,6 +696,9 @@ def create_app():
     app.router.add_post("/api/emergency/pause", api_emergency_pause)
     app.router.add_post("/api/emergency/resume", api_emergency_resume)
 
+    # 即時畫面串流 WebSocket
+    app.router.add_get("/ws/stream", ws_stream_handler)
+
     return app
 
 
@@ -762,9 +766,16 @@ if __name__ == "__main__":
         add_log(f"⚠️  全域熱鍵啟動失敗: {e}")
 
     app = create_app()
+
+    # 將共用狀態掛到 app 上，讓 WebSocket handler 可以存取
+    app["db_conn"] = conn
+    app["device_state"] = device_state
+    app["add_log"] = add_log
+
     print("=" * 50)
     print("  Game Bot Python API Server")
     print(f"  http://localhost:8765")
     print(f"  📁 DB: {db.DB_PATH}")
+    print(f"  📡 WebSocket: ws://localhost:8765/ws/stream")
     print("=" * 50)
     web.run_app(app, host="0.0.0.0", port=8765)
