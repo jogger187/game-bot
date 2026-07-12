@@ -87,48 +87,57 @@ class StreamSession:
         return adbutils.adb_path()
 
     def _screencap_jpeg(self) -> Optional[bytes]:
-        """高效截圖：adb exec-out screencap → PNG → JPEG 壓縮"""
+        """高效截圖：讀取 raw RGBA 避開 Android 緩慢的 PNG 編碼，交由 Mac 極速壓成 JPEG"""
         try:
-            cmd = [self._adb_path(), "-s", self.serial, "exec-out", "screencap", "-p"]
+            # 拔掉 -p 參數，直接拿裸的像素陣列 (Raw Framebuffer)，速度提升 2 倍以上
+            cmd = [self._adb_path(), "-s", self.serial, "exec-out", "screencap"]
             result = subprocess.run(cmd, capture_output=True, timeout=5)
-            png_data = result.stdout
-            if not png_data or len(png_data) < 100:
+            raw_data = result.stdout
+            if not raw_data or len(raw_data) < 12:
                 return None
 
             # 避免對完全相同的畫面重複耗時編碼
-            if self._last_encoded_raw == png_data:
+            if self._last_encoded_raw == raw_data:
                 return self._latest_jpeg
             
-            self._last_encoded_raw = png_data
+            self._last_encoded_raw = raw_data
 
             if HAS_CV2:
-                # OpenCV 路線：最快
-                arr = np.frombuffer(png_data, dtype=np.uint8)
-                img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-                if img is None:
-                    return None
-                h, w = img.shape[:2]
-                # 降低解析度加速傳輸
-                if w > 720:
-                    scale = 720 / w
-                    img = cv2.resize(img, (720, int(h * scale)), interpolation=cv2.INTER_AREA)
-                _, buf = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality])
-                self._resolution = (w, h)
-                return buf.tobytes()
-            elif HAS_PIL:
-                # PIL 路線：fallback
-                pil_img = Image.open(io.BytesIO(png_data))
-                w, h = pil_img.size
-                if w > 720:
-                    scale = 720 / w
-                    pil_img = pil_img.resize((720, int(h * scale)), Image.LANCZOS)
-                buf = io.BytesIO()
-                pil_img.save(buf, format='JPEG', quality=self.jpeg_quality)
-                self._resolution = (w, h)
-                return buf.getvalue()
+                import struct
+                # 解析 screencap 標頭 (12 bytes: width, height, format)
+                w, h, f = struct.unpack('<III', raw_data[:12])
+                expected_size = w * h * 4
+                
+                if len(raw_data) - 12 >= expected_size:
+                    pixels = raw_data[12:12+expected_size]
+                    # 將 1D byte array 轉為 3D numpy array (RGBA)
+                    arr = np.frombuffer(pixels, dtype=np.uint8).reshape((h, w, 4))
+                    # OpenCV 需要 BGR 格式
+                    bgr = cv2.cvtColor(arr, cv2.COLOR_RGBA2BGR)
+                    
+                    # 降低解析度加速傳輸
+                    if w > 720:
+                        scale = 720 / w
+                        bgr = cv2.resize(bgr, (720, int(h * scale)), interpolation=cv2.INTER_AREA)
+                    
+                    _, buf = cv2.imencode('.jpg', bgr, [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality])
+                    self._resolution = (w, h)
+                    return buf.tobytes()
+                return None
             else:
-                # 直接回傳 PNG（不壓縮）
-                self._resolution = (0, 0)
+                # 若無 OpenCV，回退到原始 PNG 方案（因為 PIL 處理 raw bytes 較慢）
+                cmd_png = [self._adb_path(), "-s", self.serial, "exec-out", "screencap", "-p"]
+                png_data = subprocess.run(cmd_png, capture_output=True, timeout=5).stdout
+                if HAS_PIL and png_data:
+                    pil_img = Image.open(io.BytesIO(png_data))
+                    w, h = pil_img.size
+                    if w > 720:
+                        scale = 720 / w
+                        pil_img = pil_img.resize((720, int(h * scale)), Image.LANCZOS)
+                    buf = io.BytesIO()
+                    pil_img.save(buf, format='JPEG', quality=self.jpeg_quality)
+                    self._resolution = (w, h)
+                    return buf.getvalue()
                 return png_data
 
         except (subprocess.TimeoutExpired, Exception):
