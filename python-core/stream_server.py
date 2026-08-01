@@ -208,12 +208,17 @@ class StreamSession:
 
     def _shell_write(self, cmd: str):
         """向持久化 shell 寫入指令"""
+        self.log(f"⚡ [底層指令] 準備寫入: {cmd}")
         if self._shell_proc and self._shell_proc.poll() is None:
             try:
                 self._shell_proc.stdin.write((cmd + "\n").encode())
                 self._shell_proc.stdin.flush()
-            except Exception:
+                self.log(f"⚡ [底層指令] 已成功送出至 shell_proc (PID: {self._shell_proc.pid})")
+            except Exception as e:
+                self.log(f"❌ [底層指令] 寫入失敗: {e}")
                 self._shell_proc = None
+        else:
+            self.log(f"❌ [底層指令] shell_proc 不存在或已關閉")
 
     def _cleanup_shell(self):
         """清理持久化 shell"""
@@ -226,6 +231,7 @@ class StreamSession:
 
     def inject_tap(self, x: int, y: int):
         """注入點擊事件"""
+        self.log(f"👆 串流點擊 ({x}, {y})")
         if self._ensure_shell():
             self._shell_write(f"input tap {x} {y}")
         else:

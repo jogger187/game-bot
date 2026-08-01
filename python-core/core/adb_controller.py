@@ -234,6 +234,7 @@ class AdbController:
         import subprocess
         if not self.device:
             return
+        logger.info(f"⚡ [底層指令] 準備執行 subprocess: adb shell {cmd}")
         try:
             # 直接使用原生 adb 指令，最穩定
             subprocess.run(
@@ -242,8 +243,9 @@ class AdbController:
                 stderr=subprocess.DEVNULL,
                 timeout=5
             )
+            logger.info(f"⚡ [底層指令] subprocess 執行完畢")
         except Exception as e:
-            logger.warning(f"ADB subprocess error: {e}")
+            logger.warning(f"❌ [底層指令] ADB subprocess error: {e}")
 
     def tap(self, x: int, y: int) -> None:
         """點擊螢幕座標"""
@@ -251,7 +253,7 @@ class AdbController:
             self._emulator_bridge.tap(x, y)
         else:
             self._safe_shell(f"input tap {x} {y}")
-        logger.debug(f"👆 點擊 ({x}, {y})")
+        logger.info(f"👆 點擊 ({x}, {y})")
 
     def swipe(self, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 500) -> None:
         """滑動"""

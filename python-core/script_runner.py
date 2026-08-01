@@ -175,12 +175,17 @@ class ScriptRunner:
 
     def _shell_write(self, cmd: str):
         """向持久化 shell 寫入指令"""
+        self.log(f"⚡ [底層指令] 準備寫入 shell_proc: {repr(cmd)}")
         if self._shell_proc and self._shell_proc.poll() is None:
             try:
                 self._shell_proc.stdin.write((cmd + "\n").encode())
                 self._shell_proc.stdin.flush()
-            except Exception:
+                self.log(f"⚡ [底層指令] 已成功送出至 shell_proc (PID: {self._shell_proc.pid})")
+            except Exception as e:
+                self.log(f"❌ [底層指令] shell_proc 寫入失敗: {e}")
                 self._shell_proc = None
+        else:
+            self.log("❌ [底層指令] shell_proc 不存在或已關閉")
 
     def _sendevent_tap(self, x: int, y: int):
         """
@@ -214,9 +219,8 @@ class ScriptRunner:
         elif hold_ms > 0:
             self.adb("shell", "input", "swipe", str(x), str(y), str(x), str(y), str(hold_ms))
         else:
-            # 嘗試 sendevent 快速點擊，失敗則 fallback 到 input tap
-            if not self._sendevent_tap(x, y):
-                self.adb("shell", "input", "tap", str(x), str(y))
+            # 改回使用 input tap，確保在所有模擬器上都能正常反應
+            self.adb("shell", "input", "tap", str(x), str(y))
 
     def swipe(self, x1: int, y1: int, x2: int, y2: int, duration: int = 300):
         """滑動"""

@@ -118,6 +118,7 @@ class InputSimulator:
         """帶隨機偏移的點擊"""
         jx = self._jitter(x, offset)
         jy = self._jitter(y, offset)
+        logger.info(f"👆 點擊 ({jx}, {jy})")
         self.adb.tap(jx, jy)
         self._wait_tap()
 

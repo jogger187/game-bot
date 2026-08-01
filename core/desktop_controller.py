@@ -465,13 +465,15 @@ class DesktopController:
 
     def tap(self, x: int, y: int, hold_ms: int = 0) -> None:
         """點擊視窗座標（背景操作）"""
+        logger.info(f"⚡ [底層指令] 準備發送 macOS kCGEventLeftMouseDown 至 ({x}, {y})")
         self._post_mouse_event(_Quartz.kCGEventLeftMouseDown, x, y)
         if hold_ms > 0:
             time.sleep(hold_ms / 1000.0)
         else:
             time.sleep(0.02)
+        logger.info(f"⚡ [底層指令] 準備發送 macOS kCGEventLeftMouseUp 至 ({x}, {y})")
         self._post_mouse_event(_Quartz.kCGEventLeftMouseUp, x, y)
-        logger.debug(f"👆 桌面點擊 ({x}, {y}){f' 長按 {hold_ms}ms' if hold_ms > 0 else ''}")
+        logger.info(f"👆 桌面點擊 ({x}, {y}){f' 長按 {hold_ms}ms' if hold_ms > 0 else ''}")
 
     def swipe(
         self,
