@@ -1,20 +1,22 @@
 // 任務執行控制頁面
-import { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import {
   Box, Typography, Paper, Table, TableBody, TableCell, TableContainer,
   TableHead, TableRow, IconButton, Button, Chip, FormControl, InputLabel,
   Select, MenuItem, Dialog, DialogTitle, DialogContent, DialogActions,
-  Tooltip, TextField, RadioGroup, FormControlLabel, Radio, FormLabel, Stack,
+  Tooltip, TextField, RadioGroup, FormControlLabel, Radio, FormLabel, Stack, Collapse,
 } from '@mui/material';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import PauseIcon from '@mui/icons-material/Pause';
 import StopIcon from '@mui/icons-material/Stop';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
+import ListAltIcon from '@mui/icons-material/ListAlt';
 import { useAppStore } from '../stores/appStore';
 
 const TaskRunner = () => {
-  const { scripts, tasks, fetchScripts, fetchTasks, startTask, toggleTask, stopTask, removeTask } = useAppStore();
+  const { scripts, tasks, logs, fetchScripts, fetchTasks, fetchLogs, startTask, toggleTask, stopTask, removeTask } = useAppStore();
+  const [expandedLogs, setExpandedLogs] = useState<Record<string, boolean>>({});
   const [launchOpen, setLaunchOpen] = useState(false);
   const [selectedScript, setSelectedScript] = useState('');
   const [runMode, setRunMode] = useState<'loop' | 'fixed' | 'scheduled'>('loop');
@@ -25,20 +27,22 @@ const TaskRunner = () => {
   const [newTime, setNewTime] = useState<string>('09:00:00');
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // 初始載入 + 自動輪詢任務狀態
+  // 初始載入 + 自動輪詢任務狀態和日誌
   useEffect(() => {
     fetchScripts();
     fetchTasks();
+    fetchLogs();
 
-    // 每 2 秒刷新任務列表
+    // 每 2 秒刷新任務列表與日誌
     intervalRef.current = setInterval(() => {
       fetchTasks();
+      fetchLogs();
     }, 2000);
 
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [fetchScripts, fetchTasks]);
+  }, [fetchScripts, fetchTasks, fetchLogs]);
 
   const handleStart = async () => {
     const script = scripts.find((s) => s.id === selectedScript);
@@ -105,56 +109,88 @@ const TaskRunner = () => {
                 </TableCell>
               </TableRow>
             ) : (
-              tasks.map((t) => (
-                <TableRow key={t.job_id} sx={{ opacity: t.completed ? 0.6 : 1 }}>
-                  <TableCell>{t.script_name}</TableCell>
-                  <TableCell>
-                    {t.run_mode === 'loop' ? '循環' : t.run_mode === 'scheduled' ? '每日定時' : `固定 ${t.max_runs} 次`}
-                  </TableCell>
-                  <TableCell>{t.run_count}{t.max_runs > 0 ? ` / ${t.max_runs}` : ''}</TableCell>
-                  <TableCell>{getStatusChip(t)}</TableCell>
-                  <TableCell align="right">
-                    {/* 暫停 / 繼續 按鈕 */}
-                    {!t.completed && (
-                      <Tooltip title={t.enabled ? '暫停' : '繼續'}>
+              tasks.map((t) => {
+                const taskLogs = logs.filter(log => log.includes(`[Task ${t.job_id.slice(0, 8)}]`));
+                return (
+                <React.Fragment key={t.job_id}>
+                  <TableRow sx={{ opacity: t.completed ? 0.6 : 1, '& > *': { borderBottom: 'unset' } }}>
+                    <TableCell>{t.script_name}</TableCell>
+                    <TableCell>
+                      {t.run_mode === 'loop' ? '循環' : t.run_mode === 'scheduled' ? '每日定時' : `固定 ${t.max_runs} 次`}
+                    </TableCell>
+                    <TableCell>{t.run_count}{t.max_runs > 0 ? ` / ${t.max_runs}` : ''}</TableCell>
+                    <TableCell>{getStatusChip(t)}</TableCell>
+                    <TableCell align="right">
+                      {/* 檢視日誌 按鈕 */}
+                      <Tooltip title="檢視即時日誌">
                         <IconButton
                           size="small"
-                          color={t.enabled ? 'warning' : 'success'}
-                          onClick={() => toggleTask(t.job_id)}
+                          color={expandedLogs[t.job_id] ? "primary" : "default"}
+                          onClick={() => setExpandedLogs(prev => ({ ...prev, [t.job_id]: !prev[t.job_id] }))}
                         >
-                          {t.enabled ? <PauseIcon /> : <PlayArrowIcon />}
+                          <ListAltIcon />
                         </IconButton>
                       </Tooltip>
-                    )}
 
-                    {/* 停止 按鈕（僅執行中/暫停中顯示） */}
-                    {!t.completed && (
-                      <Tooltip title="停止">
-                        <IconButton
-                          size="small"
-                          color="error"
-                          onClick={() => stopTask(t.job_id)}
-                        >
-                          <StopIcon />
-                        </IconButton>
-                      </Tooltip>
-                    )}
+                      {/* 暫停 / 繼續 按鈕 */}
+                      {!t.completed && (
+                        <Tooltip title={t.enabled ? '暫停' : '繼續'}>
+                          <IconButton
+                            size="small"
+                            color={t.enabled ? 'warning' : 'success'}
+                            onClick={() => toggleTask(t.job_id)}
+                          >
+                            {t.enabled ? <PauseIcon /> : <PlayArrowIcon />}
+                          </IconButton>
+                        </Tooltip>
+                      )}
 
-                    {/* 刪除 按鈕（已完成才顯示） */}
-                    {t.completed && (
-                      <Tooltip title="移除">
-                        <IconButton
-                          size="small"
-                          color="default"
-                          onClick={() => removeTask(t.job_id)}
-                        >
-                          <DeleteIcon />
-                        </IconButton>
-                      </Tooltip>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))
+                      {/* 停止 按鈕（僅執行中/暫停中顯示） */}
+                      {!t.completed && (
+                        <Tooltip title="停止">
+                          <IconButton
+                            size="small"
+                            color="error"
+                            onClick={() => stopTask(t.job_id)}
+                          >
+                            <StopIcon />
+                          </IconButton>
+                        </Tooltip>
+                      )}
+
+                      {/* 刪除 按鈕（已完成才顯示） */}
+                      {t.completed && (
+                        <Tooltip title="移除">
+                          <IconButton
+                            size="small"
+                            color="default"
+                            onClick={() => removeTask(t.job_id)}
+                          >
+                            <DeleteIcon />
+                          </IconButton>
+                        </Tooltip>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell style={{ paddingBottom: 0, paddingTop: 0 }} colSpan={5}>
+                      <Collapse in={expandedLogs[t.job_id]} timeout="auto" unmountOnExit>
+                        <Box sx={{ margin: 1, maxHeight: 250, overflow: 'auto', bgcolor: '#0f172a', p: 1.5, borderRadius: 1 }}>
+                          {taskLogs.length === 0 ? (
+                            <Typography variant="body2" color="text.secondary">暫無日誌...</Typography>
+                          ) : (
+                            taskLogs.slice(-50).map((log, i) => (
+                              <Typography key={i} variant="body2" sx={{ fontFamily: 'monospace', fontSize: 12, color: '#e2e8f0', whiteSpace: 'pre-wrap' }}>
+                                {log}
+                              </Typography>
+                            ))
+                          )}
+                        </Box>
+                      </Collapse>
+                    </TableCell>
+                  </TableRow>
+                </React.Fragment>
+              )})
             )}
           </TableBody>
         </Table>

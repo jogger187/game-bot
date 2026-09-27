@@ -89,9 +89,7 @@ class ScriptRunner:
 
     def log(self, msg: str):
         """記錄日誌"""
-        ts = datetime.now().strftime("%H:%M:%S")
-        entry = f"[{ts}] {msg}"
-        self.on_log(entry)
+        self.on_log(msg)
 
     def _precise_sleep(self, seconds: float) -> bool:
         """
@@ -602,6 +600,9 @@ class ScriptRunner:
             # 每個節點執行前檢查緊急暫停
             if not self._check_pause():
                 break
+
+            node_type = node.get("type", "unknown")
+            self.log(f"📍 [Checkpoint] 執行節點: {node_type} (步驟 {step})")
 
             # 執行節點
             output_port = self.execute_node(node)

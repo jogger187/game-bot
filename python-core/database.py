@@ -389,11 +389,14 @@ def log_list(conn: sqlite3.Connection, limit: int = 200, level: Optional[str] = 
         ts = r["created_at"]
         # 嘗試提取時間部分
         try:
-            dt = datetime.fromisoformat(ts)
+            dt = datetime.fromisoformat(ts).astimezone()
             time_str = dt.strftime("%H:%M:%S")
         except (ValueError, TypeError):
             time_str = ts[:19] if ts else ""
-        result.append(f"[{time_str}] {r['message']}")
+            
+        job_id = r["job_id"]
+        task_prefix = f" [Task {job_id[:8]}]" if job_id else ""
+        result.append(f"[{time_str}]{task_prefix} {r['message']}")
     return result
 
 
