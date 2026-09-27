@@ -16,8 +16,12 @@ echo "🧹 清理舊進程..."
 # 停止舊的 API Server
 if lsof -ti:8765 >/dev/null 2>&1; then
     echo "  ⚠️  Port 8765 被占用，正在清理..."
-    lsof -ti:8765 | xargs kill -9 2>/dev/null
-    sleep 1
+    PIDS=$(lsof -ti:8765)
+    if [ -n "$PIDS" ]; then
+        echo "$PIDS" | xargs kill 2>/dev/null
+        sleep 2
+        lsof -ti:8765 | xargs kill -9 2>/dev/null
+    fi
 fi
 
 # 停止舊的前端

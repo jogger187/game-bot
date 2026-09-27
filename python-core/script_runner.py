@@ -447,23 +447,47 @@ class ScriptRunner:
             self.key_event(key)
             return "default"
 
-        elif node_type == "condition":
-            cond_type = data.get("condition_type", "find_image")
-            # 簡化處理：根據條件類型判斷
-            if cond_type == "find_image":
+        elif node_type == "if_else":
+            cond_type = data.get("condition_type", "image_found")
+            passed = False
+            
+            if cond_type == "image_found":
                 template = data.get("template", "")
                 threshold = data.get("threshold", 0.8)
                 result = self.find_template(template, threshold, timeout=3)
                 if result["found"]:
                     self._last_match_pos = (result["x"], result["y"])
                 passed = result["found"]
-            elif cond_type == "variable_check":
+            elif cond_type == "image_not_found":
+                template = data.get("template", "")
+                threshold = data.get("threshold", 0.8)
+                result = self.find_template(template, threshold, timeout=3)
+                if not result["found"]:
+                    self._last_match_pos = None
+                passed = not result["found"]
+            elif cond_type == "variable_equals":
                 var_name = data.get("variable", "")
-                expected = data.get("expected_value", "")
+                expected = data.get("compare_value", "")
                 actual = str(self.variables.get(var_name, ""))
-                passed = actual == expected
-            else:
-                passed = False
+                passed = (actual == expected)
+            elif cond_type == "variable_gt":
+                var_name = data.get("variable", "")
+                compare_val = data.get("compare_value", "0")
+                actual = self.variables.get(var_name, 0)
+                try:
+                    passed = float(actual) > float(compare_val)
+                except ValueError:
+                    passed = False
+            elif cond_type == "variable_lt":
+                var_name = data.get("variable", "")
+                compare_val = data.get("compare_value", "0")
+                actual = self.variables.get(var_name, 0)
+                try:
+                    passed = float(actual) < float(compare_val)
+                except ValueError:
+                    passed = False
+            elif cond_type == "always_true":
+                passed = True
 
             self.log(f"❓ 條件判斷 ({cond_type}): {'True' if passed else 'False'}")
             return "true" if passed else "false"
@@ -496,7 +520,7 @@ class ScriptRunner:
             self._sleep_with_pause(delay / 1000.0)
             return "default"
 
-        elif node_type == "ocr":
+        elif node_type == "ocr_text":
             self.log("🔤 OCR 辨識（尚未完整實作）")
             return "default"
 
