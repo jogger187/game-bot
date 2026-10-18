@@ -220,8 +220,10 @@ const Settings = () => {
         onClose={() => setWindowPickerOpen(false)}
         maxWidth="sm"
         fullWidth
-        PaperProps={{
-          sx: { bgcolor: 'background.paper', maxHeight: '70vh' },
+        slotProps={{
+          paper: {
+            sx: { bgcolor: 'background.paper', maxHeight: '70vh' },
+          },
         }}
       >
         <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -264,7 +266,7 @@ const Settings = () => {
               />
               <List sx={{ p: 0 }}>
                 {filteredWindows.length === 0 ? (
-                  <Typography color="text.secondary" textAlign="center" sx={{ py: 2 }}>
+                  <Typography color="text.secondary" sx={{ textAlign: 'center', py: 2 }}>
                     沒有符合的視窗
                   </Typography>
                 ) : (
