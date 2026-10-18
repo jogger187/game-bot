@@ -24,7 +24,7 @@ interface AdbDevice {
 }
 
 const Dashboard = () => {
-  const { device, scripts, assets, tasks, logs, connectDevice, disconnectDevice, fetchDevice } = useAppStore();
+  const { device, scripts, assets, tasks, logs, connectDevice, disconnectDevice, fetchDevice, addLog } = useAppStore();
 
   // 裝置選擇對話框
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -115,13 +115,14 @@ const Dashboard = () => {
   };
 
   // 判斷裝置類型圖標
-  const getDeviceIcon = (serial: string) => {
+  const _getDeviceIcon = (serial: string) => {
     if (serial.startsWith('desktop:'))
       return <DesktopWindowsIcon sx={{ color: '#8b5cf6' }} />;
     if (serial.includes('emulator') || serial.includes('127.0.0.1') || serial.includes(':'))
       return <ComputerIcon sx={{ color: '#6366f1' }} />;
     return <SmartphoneIcon sx={{ color: '#10b981' }} />;
   };
+  void _getDeviceIcon;
 
   // 判斷裝置描述
   const getDeviceLabel = (serial: string) => {
@@ -316,7 +317,7 @@ const Dashboard = () => {
                 />
                 <List>
                   {filteredWindows.length === 0 ? (
-                    <Typography color="text.secondary" textAlign="center" sx={{ py: 2 }}>
+                    <Typography color="text.secondary" sx={{ textAlign: 'center', py: 2 }}>
                       沒有符合的視窗
                     </Typography>
                   ) : (
