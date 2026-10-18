@@ -4,29 +4,13 @@ import {
   Switch, FormControlLabel, Divider,
 } from '@mui/material';
 import { NODE_MODULES, type ScriptNodeType } from '../types/script';
-import { useAppStore } from '../stores/appStore';
+import { TemplateSelect } from './TemplateSelect';
 
 interface Props {
   nodeType: ScriptNodeType;
   data: Record<string, unknown>;
   onChange: (key: string, value: unknown) => void;
 }
-
-/** 可用資源列表下拉選擇器 */
-const TemplateSelect = ({ value, onChange }: { value: string; onChange: (v: string) => void }) => {
-  const { assets } = useAppStore();
-  return (
-    <FormControl fullWidth size="small" sx={{ mb: 1.5 }}>
-      <InputLabel>模板圖片</InputLabel>
-      <Select value={value || ''} label="模板圖片" onChange={(e) => onChange(e.target.value)}>
-        <MenuItem value="">（未選擇）</MenuItem>
-        {assets.map((a) => (
-          <MenuItem key={a.name} value={a.name}>{a.name}</MenuItem>
-        ))}
-      </Select>
-    </FormControl>
-  );
-};
 
 /** 數字輸入 */
 const NumberField = ({ label, value, onChange, min, max, step }: {
