@@ -289,16 +289,18 @@ class StreamSession:
         self.log(f"⏹️ 停止錄製，共 {len(actions)} 個操作")
         return actions
 
-    def save_recording(self, name: str, script_id: Optional[str] = None) -> dict:
+    def save_recording(self, name: str, script_id: Optional[str] = None, actions: Optional[list[dict]] = None) -> dict:
         """將錄製結果儲存到資料庫"""
         import database as db
-        actions = self.recorded_actions
-        duration_ms = int((actions[-1]["time"] * 1000) if actions else 0)
+        if actions is not None:
+            self.recorded_actions = actions
+        recorded = self.recorded_actions
+        duration_ms = int((recorded[-1]["time"] * 1000) if recorded else 0)
         recording = db.recording_create(
-            self.db_conn, name=name, actions=actions,
+            self.db_conn, name=name, actions=recorded,
             duration_ms=duration_ms, script_id=script_id,
         )
-        self.log(f"💾 錄製已儲存: {name} ({len(actions)} 個操作)")
+        self.log(f"💾 錄製已儲存: {name} ({len(recorded)} 個操作)")
         return recording
 
 
@@ -447,9 +449,10 @@ async def ws_stream_handler(request: web.Request) -> web.WebSocketResponse:
                     if session:
                         name = data.get("name", "未命名錄製")
                         script_id = data.get("script_id")
+                        actions = data.get("actions")
                         try:
                             recording = await asyncio.get_event_loop().run_in_executor(
-                                None, session.save_recording, name, script_id
+                                None, session.save_recording, name, script_id, actions
                             )
                             await ws.send_json({
                                 "type": "recording_saved",

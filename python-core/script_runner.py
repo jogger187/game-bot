@@ -420,17 +420,35 @@ class ScriptRunner:
             return "default"
 
         elif node_type == "swipe":
-            x1, y1 = data.get("x1", 0), data.get("y1", 0)
-            x2, y2 = data.get("x2", 0), data.get("y2", 0)
+            x1 = data.get("from_x", data.get("x1", 0))
+            y1 = data.get("from_y", data.get("y1", 0))
+            x2 = data.get("to_x", data.get("x2", 0))
+            y2 = data.get("to_y", data.get("y2", 0))
             duration = data.get("duration", 300)
+            rand_range = data.get("random_range", 0)
+            if rand_range > 0:
+                x1 += random.randint(-rand_range, rand_range)
+                y1 += random.randint(-rand_range, rand_range)
+                x2 += random.randint(-rand_range, rand_range)
+                y2 += random.randint(-rand_range, rand_range)
             self.log(f"👉 滑動 ({x1},{y1}) → ({x2},{y2}) {duration}ms")
             self.swipe(x1, y1, x2, y2, duration)
             return "default"
 
-        elif node_type == "wait":
-            ms = data.get("ms", 1000)
-            self.log(f"⏳ 等待 {ms}ms")
-            self._sleep_with_pause(ms / 1000.0)
+        elif node_type in ("wait", "sleep"):
+            duration = data.get("duration")
+            if duration is not None:
+                rand_min = data.get("random_min", 0)
+                rand_max = data.get("random_max", 0)
+                if rand_max > rand_min >= 0:
+                    wait_sec = random.uniform(rand_min, rand_max)
+                else:
+                    wait_sec = float(duration)
+            else:
+                ms = data.get("ms", 1000)
+                wait_sec = ms / 1000.0
+            self.log(f"⏳ 等待 {wait_sec:.2f} 秒")
+            self._sleep_with_pause(wait_sec)
             return "default"
 
         elif node_type == "type_text":
@@ -511,11 +529,16 @@ class ScriptRunner:
             return "default"
 
         elif node_type == "random_delay":
-            min_ms = data.get("min_ms", 500)
-            max_ms = data.get("max_ms", 2000)
-            delay = random.randint(min_ms, max_ms)
-            self.log(f"⏳ Loop 等待 {delay}ms...")
-            self._sleep_with_pause(delay / 1000.0)
+            min_sec = data.get("min_seconds")
+            max_sec = data.get("max_seconds")
+            if min_sec is not None and max_sec is not None:
+                delay = random.uniform(float(min_sec), float(max_sec))
+            else:
+                min_ms = data.get("min_ms", 500)
+                max_ms = data.get("max_ms", 2000)
+                delay = random.randint(min_ms, max_ms) / 1000.0
+            self.log(f"⏳ 隨機延遲 {delay:.2f} 秒...")
+            self._sleep_with_pause(delay)
             return "default"
 
         elif node_type == "ocr_text":
