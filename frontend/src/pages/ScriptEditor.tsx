@@ -21,6 +21,12 @@ import { NODE_MODULES, type Script, type ScriptNodeType, type NodeModuleDef } fr
 import ScriptNodeComponent from '../components/ScriptNode';
 import NodePropertiesPanel from '../components/NodePropertiesPanel';
 import LiveRecorder from '../components/LiveRecorder';
+import {
+  applyActionsToFlow,
+  buildScriptFromActions,
+  type ConvertOptions,
+  type RecordedAction,
+} from '../utils/recordConverter';
 
 // 註冊自訂節點類型
 const nodeTypes = { custom: ScriptNodeComponent };
@@ -165,6 +171,68 @@ const ScriptEditor = () => {
     setSelectedNodeId(null);
   };
 
+  // ── 錄製操作轉換為流程方塊 ──
+  const handleApplyRecordedActions = async (
+    options: ConvertOptions,
+    recordedActions: RecordedAction[],
+  ) => {
+    if (options.applyMode === 'new_script') {
+      const scriptName = options.newScriptName?.trim() || `錄製腳本_${Date.now()}`;
+      const newScript = await createScript(scriptName);
+      const { nodes: convertedNodes, edges: convertedEdges } = buildScriptFromActions(
+        recordedActions,
+        options,
+      );
+      await saveScript({
+        ...newScript,
+        nodes: convertedNodes,
+        edges: convertedEdges,
+      });
+      setSelectedId(newScript.id);
+      setActiveTab(0);
+      return;
+    }
+
+    if (!selected) return;
+
+    const { nodes: newNodes, edges: newEdges, insertedNodeIds } = applyActionsToFlow(
+      nodes,
+      edges,
+      recordedActions,
+      options,
+    );
+
+    setNodes(newNodes);
+    setEdges(newEdges);
+    if (insertedNodeIds.length > 0) {
+      setSelectedNodeId(insertedNodeIds[0]);
+    }
+
+    // 自動保存更新後的腳本
+    const updatedScript: Script = {
+      ...selected,
+      nodes: newNodes.map((n) => {
+        const { node_type, ...restData } = (n.data as Record<string, unknown>) ?? {};
+        return {
+          id: n.id,
+          type: (node_type as ScriptNodeType) ?? 'start',
+          position: n.position,
+          data: restData,
+        };
+      }),
+      edges: newEdges.map((e) => ({
+        id: e.id,
+        source: e.source,
+        target: e.target,
+        sourceHandle: e.sourceHandle ?? undefined,
+        label: (e.label as string) ?? undefined,
+      })),
+    };
+
+    await saveScript(updatedScript);
+    setActiveTab(0); // 自動切回方塊編輯頁面查看
+  };
+
   return (
     <Box sx={{ display: 'flex', height: '100%' }}>
       {/* ══════ 左側：腳本列表 + 模塊工具箱 ══════ */}
@@ -256,44 +324,64 @@ const ScriptEditor = () => {
             </Tabs>
 
             {/* Tab 0: React Flow 編輯器 */}
-            {activeTab === 0 && (
-              <Box sx={{ flex: 1, position: 'relative' }}>
-                {/* 頂部工具列 */}
-                <Box sx={{ position: 'absolute', top: 12, right: 12, zIndex: 10, display: 'flex', gap: 1 }}>
-                  {selectedNodeId && (selectedNode?.data as Record<string, unknown>)?.node_type !== 'start'
-                    && (selectedNode?.data as Record<string, unknown>)?.node_type !== 'end' && (
-                    <Button size="small" variant="contained" color="error" onClick={deleteSelectedNode}>
-                      🗑 刪除節點
-                    </Button>
-                  )}
-                  <Button size="small" variant="contained" color="success" startIcon={<SaveIcon />} onClick={handleSave}>
-                    儲存
+            <Box
+              sx={{
+                flex: 1,
+                position: 'relative',
+                display: activeTab === 0 ? 'flex' : 'none',
+                flexDirection: 'column',
+                minHeight: 0,
+              }}
+            >
+              {/* 頂部工具列 */}
+              <Box sx={{ position: 'absolute', top: 12, right: 12, zIndex: 10, display: 'flex', gap: 1 }}>
+                {selectedNodeId && (selectedNode?.data as Record<string, unknown>)?.node_type !== 'start'
+                  && (selectedNode?.data as Record<string, unknown>)?.node_type !== 'end' && (
+                  <Button size="small" variant="contained" color="error" onClick={deleteSelectedNode}>
+                    🗑 刪除節點
                   </Button>
-                </Box>
-
-                <ReactFlow
-                  nodes={nodes} edges={edges}
-                  onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
-                  onConnect={onConnect}
-                  onNodeClick={onNodeClick}
-                  onPaneClick={onPaneClick}
-                  nodeTypes={nodeTypes}
-                  fitView
-                  style={{ background: '#0f172a' }}
-                >
-                  <Controls />
-                  <MiniMap style={{ background: '#1e293b' }} />
-                  <Background color="#334155" gap={20} />
-                </ReactFlow>
+                )}
+                <Button size="small" variant="contained" color="success" startIcon={<SaveIcon />} onClick={handleSave}>
+                  儲存
+                </Button>
               </Box>
-            )}
+
+              <ReactFlow
+                nodes={nodes} edges={edges}
+                onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
+                onConnect={onConnect}
+                onNodeClick={onNodeClick}
+                onPaneClick={onPaneClick}
+                nodeTypes={nodeTypes}
+                fitView
+                style={{ background: '#0f172a' }}
+              >
+                <Controls />
+                <MiniMap style={{ background: '#1e293b' }} />
+                <Background color="#334155" gap={20} />
+              </ReactFlow>
+            </Box>
 
             {/* Tab 1: 即時錄製 */}
-            {activeTab === 1 && (
-              <Box sx={{ flex: 1 }}>
-                <LiveRecorder scriptId={selectedId} />
-              </Box>
-            )}
+            <Box
+              sx={{
+                flex: 1,
+                display: activeTab === 1 ? 'block' : 'none',
+                height: '100%',
+                minHeight: 0,
+              }}
+            >
+              <LiveRecorder
+                scriptId={selectedId}
+                selectedNodeId={selectedNodeId}
+                selectedNodeLabel={
+                  selectedNode
+                    ? ((selectedNode.data as Record<string, unknown>)?.node_type as string) || selectedNode.id
+                    : null
+                }
+                onApplyToScript={handleApplyRecordedActions}
+              />
+            </Box>
           </>
         ) : (
           <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>

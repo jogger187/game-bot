@@ -9,7 +9,8 @@ import {
   Box, Paper, Typography, Button, IconButton, Chip, List,
   ListItem, ListItemText, ListItemSecondaryAction, Tooltip,
   Dialog, DialogTitle, DialogContent, DialogActions, TextField,
-  Alert,
+  Alert, Radio, RadioGroup, FormControlLabel, FormControl,
+  FormLabel, Divider, CircularProgress,
 } from '@mui/material';
 import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
 import StopIcon from '@mui/icons-material/Stop';
@@ -18,26 +19,25 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import TouchAppIcon from '@mui/icons-material/TouchApp';
 import SwipeIcon from '@mui/icons-material/Swipe';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
-
-interface RecordedAction {
-  time: number;
-  action: 'tap' | 'swipe';
-  x?: number;
-  y?: number;
-  from_x?: number;
-  from_y?: number;
-  to_x?: number;
-  to_y?: number;
-  duration?: number;
-}
+import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
+import DeleteSweepIcon from '@mui/icons-material/DeleteSweep';
+import type { RecordedAction, ConvertOptions, ApplyMode, DelayMode } from '../utils/recordConverter';
 
 interface LiveRecorderProps {
   scriptId: string | null;
+  selectedNodeId?: string | null;
+  selectedNodeLabel?: string | null;
+  onApplyToScript?: (options: ConvertOptions, actions: RecordedAction[]) => Promise<void>;
 }
 
 const WS_URL = 'ws://localhost:8765/ws/stream';
 
-const LiveRecorder = ({ scriptId }: LiveRecorderProps) => {
+const LiveRecorder = ({
+  scriptId,
+  selectedNodeId,
+  selectedNodeLabel,
+  onApplyToScript,
+}: LiveRecorderProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
@@ -50,6 +50,15 @@ const LiveRecorder = ({ scriptId }: LiveRecorderProps) => {
   const [error, setError] = useState<string | null>(null);
   const [saveOpen, setSaveOpen] = useState(false);
   const [saveName, setSaveName] = useState('');
+
+  // 轉換為方塊對話框狀態
+  const [applyOpen, setApplyOpen] = useState(false);
+  const [applyMode, setApplyMode] = useState<ApplyMode>('insert_after');
+  const [delayMode, setDelayMode] = useState<DelayMode>('random_delay');
+  const [minDelayThreshold, setMinDelayThreshold] = useState<number>(0.3);
+  const [randomRange, setRandomRange] = useState<number>(3);
+  const [newScriptName, setNewScriptName] = useState<string>('');
+  const [applying, setApplying] = useState(false);
 
   // 滑動追蹤
   const swipeStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
@@ -161,7 +170,45 @@ const LiveRecorder = ({ scriptId }: LiveRecorderProps) => {
   const handleStopRecording = () => sendMsg({ type: 'stop_recording' });
   const handleSaveRecording = () => {
     if (!saveName.trim()) return;
-    sendMsg({ type: 'save_recording', name: saveName.trim(), script_id: scriptId });
+    sendMsg({
+      type: 'save_recording',
+      name: saveName.trim(),
+      script_id: scriptId,
+      actions,
+    });
+  };
+
+  const handleClearActions = () => {
+    setActions([]);
+  };
+
+  const handleOpenApplyDialog = () => {
+    const defaultName = `錄製腳本_${new Date().toLocaleTimeString('zh-TW', { hour12: false })}`;
+    setNewScriptName(defaultName);
+    setApplyOpen(true);
+  };
+
+  const handleApply = async () => {
+    if (!onApplyToScript || actions.length === 0) return;
+    setApplying(true);
+    try {
+      await onApplyToScript(
+        {
+          applyMode,
+          delayMode,
+          minDelayThreshold,
+          randomRange,
+          targetNodeId: selectedNodeId,
+          newScriptName: newScriptName.trim(),
+        },
+        actions,
+      );
+      setApplyOpen(false);
+    } catch (e) {
+      setError(`套用失敗: ${e}`);
+    } finally {
+      setApplying(false);
+    }
   };
 
   // ── 計算實際裝置座標 ──
@@ -326,13 +373,30 @@ const LiveRecorder = ({ scriptId }: LiveRecorderProps) => {
           )}
 
           {!recording && actions.length > 0 && (
-            <Button
-              size="small" variant="contained" color="success"
-              startIcon={<SaveIcon />}
-              onClick={() => setSaveOpen(true)}
-            >
-              儲存 ({actions.length} 步)
-            </Button>
+            <>
+              <Button
+                size="small" variant="contained"
+                startIcon={<AutoFixHighIcon />}
+                onClick={handleOpenApplyDialog}
+                sx={{
+                  background: 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)',
+                  color: '#fff',
+                  fontWeight: 600,
+                  '&:hover': {
+                    background: 'linear-gradient(135deg, #4338ca 0%, #6d28d9 100%)',
+                  },
+                }}
+              >
+                轉為方塊 ({actions.length} 步)
+              </Button>
+              <Button
+                size="small" variant="outlined" color="success"
+                startIcon={<SaveIcon />}
+                onClick={() => setSaveOpen(true)}
+              >
+                儲存記錄
+              </Button>
+            </>
           )}
 
           {/* 連線狀態 */}
@@ -400,10 +464,17 @@ const LiveRecorder = ({ scriptId }: LiveRecorderProps) => {
           display: 'flex', flexDirection: 'column', overflow: 'hidden',
         }}
       >
-        <Box sx={{ p: 1.5, borderBottom: '1px solid', borderColor: 'divider' }}>
+        <Box sx={{ p: 1.5, borderBottom: '1px solid', borderColor: 'divider', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Typography variant="subtitle2" sx={{ fontWeight: 'bold' }}>
             📋 操作清單 {actions.length > 0 && `(${actions.length})`}
           </Typography>
+          {actions.length > 0 && !recording && (
+            <Tooltip title="清空操作清單" arrow>
+              <IconButton size="small" color="error" onClick={handleClearActions}>
+                <DeleteSweepIcon sx={{ fontSize: 18 }} />
+              </IconButton>
+            </Tooltip>
+          )}
         </Box>
 
         <List dense sx={{ flex: 1, overflow: 'auto', py: 0 }}>
@@ -447,9 +518,9 @@ const LiveRecorder = ({ scriptId }: LiveRecorderProps) => {
         </List>
       </Paper>
 
-      {/* 儲存對話框 */}
+      {/* 儲存對話框 (純存 DB 歷史) */}
       <Dialog open={saveOpen} onClose={() => setSaveOpen(false)}>
-        <DialogTitle>💾 儲存錄製</DialogTitle>
+        <DialogTitle>💾 儲存錄製記錄</DialogTitle>
         <DialogContent>
           <TextField
             autoFocus fullWidth label="錄製名稱"
@@ -460,13 +531,179 @@ const LiveRecorder = ({ scriptId }: LiveRecorderProps) => {
             placeholder="例：自動刷副本"
           />
           <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-            共 {actions.length} 個操作
+            共 {actions.length} 個操作，將儲存至後端資料庫
           </Typography>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setSaveOpen(false)}>取消</Button>
           <Button variant="contained" onClick={handleSaveRecording} disabled={!saveName.trim()}>
             儲存
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* 轉為方塊對話框 */}
+      <Dialog open={applyOpen} onClose={() => !applying && setApplyOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle sx={{ fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: 1 }}>
+          <AutoFixHighIcon color="primary" /> 解析錄製結果並轉為流程方塊
+        </DialogTitle>
+        <DialogContent dividers>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
+            {/* 套用方式 */}
+            <FormControl component="fieldset">
+              <FormLabel component="legend" sx={{ fontWeight: 'bold', mb: 1, fontSize: 14 }}>
+                1. 套用目標
+              </FormLabel>
+              <RadioGroup
+                value={applyMode}
+                onChange={(e) => setApplyMode(e.target.value as ApplyMode)}
+              >
+                <FormControlLabel
+                  value="insert_after"
+                  control={<Radio size="small" />}
+                  label={
+                    <Box>
+                      <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
+                        插入於節點後
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {selectedNodeId
+                          ? `將插入在目前選取的節點 [${selectedNodeLabel || selectedNodeId}] 之後，自動重連邊線`
+                          : '目前未選取節點，將預設接在 Start 起點節點之後'}
+                      </Typography>
+                    </Box>
+                  }
+                  sx={{ mb: 1 }}
+                />
+                <FormControlLabel
+                  value="replace"
+                  control={<Radio size="small" color="warning" />}
+                  label={
+                    <Box>
+                      <Typography variant="body2" sx={{ fontWeight: 'bold', color: '#f59e0b' }}>
+                        覆蓋當前腳本 (取代整張圖)
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        保留 Start/End 起止節點，清空中間所有方塊並改為此次錄製流程
+                      </Typography>
+                    </Box>
+                  }
+                  sx={{ mb: 1 }}
+                />
+                <FormControlLabel
+                  value="new_script"
+                  control={<Radio size="small" />}
+                  label={
+                    <Box>
+                      <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
+                        另存為全新腳本
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        不改動當前腳本，直接建立一個全新腳本並切換
+                      </Typography>
+                    </Box>
+                  }
+                />
+              </RadioGroup>
+            </FormControl>
+
+            {applyMode === 'new_script' && (
+              <TextField
+                size="small"
+                fullWidth
+                label="新腳本名稱"
+                value={newScriptName}
+                onChange={(e) => setNewScriptName(e.target.value)}
+                placeholder="輸入新腳本名稱"
+              />
+            )}
+
+            <Divider />
+
+            {/* 延遲處理 */}
+            <FormControl component="fieldset">
+              <FormLabel component="legend" sx={{ fontWeight: 'bold', mb: 1, fontSize: 14 }}>
+                2. 動作間隔延遲處理
+              </FormLabel>
+              <RadioGroup
+                value={delayMode}
+                onChange={(e) => setDelayMode(e.target.value as DelayMode)}
+              >
+                <FormControlLabel
+                  value="random_delay"
+                  control={<Radio size="small" />}
+                  label={
+                    <Box>
+                      <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
+                        🎲 隨機延遲 (推薦，防偵測防封號)
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        依實際操作間隔自動浮動 ±20%，產生 random_delay 節點
+                      </Typography>
+                    </Box>
+                  }
+                  sx={{ mb: 0.5 }}
+                />
+                <FormControlLabel
+                  value="sleep"
+                  control={<Radio size="small" />}
+                  label={
+                    <Box>
+                      <Typography variant="body2">
+                        ⏱️ 固定延遲 (產生 sleep 節點)
+                      </Typography>
+                    </Box>
+                  }
+                  sx={{ mb: 0.5 }}
+                />
+                <FormControlLabel
+                  value="none"
+                  control={<Radio size="small" />}
+                  label={<Typography variant="body2">🚫 不加延遲 (連續快速執行)</Typography>}
+                />
+              </RadioGroup>
+            </FormControl>
+
+            {delayMode !== 'none' && (
+              <Box sx={{ display: 'flex', gap: 2 }}>
+                <TextField
+                  size="small"
+                  type="number"
+                  label="最小延遲門檻 (秒)"
+                  value={minDelayThreshold}
+                  onChange={(e) => setMinDelayThreshold(Math.max(0.1, Number(e.target.value)))}
+                  helperText="小於此秒數的操作間隔將被視為連續操作，不插入等待"
+                  slotProps={{ htmlInput: { min: 0.1, step: 0.1 } }}
+                  sx={{ flex: 1 }}
+                />
+                <TextField
+                  size="small"
+                  type="number"
+                  label="點擊隨機偏移 (px)"
+                  value={randomRange}
+                  onChange={(e) => setRandomRange(Math.max(0, Number(e.target.value)))}
+                  helperText="點擊時隨機偏移像素範圍 (防座標檢測)"
+                  slotProps={{ htmlInput: { min: 0, max: 20 } }}
+                  sx={{ flex: 1 }}
+                />
+              </Box>
+            )}
+          </Box>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, py: 2 }}>
+          <Button onClick={() => setApplyOpen(false)} disabled={applying}>
+            取消
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleApply}
+            disabled={applying || (applyMode === 'new_script' && !newScriptName.trim())}
+            startIcon={applying ? <CircularProgress size={16} color="inherit" /> : <AutoFixHighIcon />}
+            sx={{
+              background: 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)',
+            }}
+          >
+            {applying ? '轉換中...' : `確認轉換 (${actions.length} 步)`}
           </Button>
         </DialogActions>
       </Dialog>
