@@ -236,44 +236,93 @@ const ScriptEditor = () => {
   return (
     <Box sx={{ display: 'flex', height: '100%' }}>
       {/* ══════ 左側：腳本列表 + 模塊工具箱 ══════ */}
-      <Paper sx={{ width: 260, borderRadius: 0, borderRight: '1px solid', borderColor: 'divider', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        {/* 腳本列表 */}
-        <Box sx={{ p: 1.5, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Typography variant="subtitle2" sx={{ fontWeight: 'bold' }}>📋 腳本</Typography>
-          <IconButton size="small" color="primary" onClick={() => setCreateOpen(true)}><AddIcon /></IconButton>
+      <Paper
+        sx={{
+          width: 260,
+          borderRadius: 0,
+          borderRight: '1px solid',
+          borderColor: 'divider',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+          height: '100%',
+        }}
+      >
+        {/* ── 上半部：腳本列表 (未選中佔 100%，已選中各佔 50%) ── */}
+        <Box
+          sx={{
+            flex: selected ? '0 0 50%' : 1,
+            height: selected ? '50%' : '100%',
+            display: 'flex',
+            flexDirection: 'column',
+            minHeight: 0,
+            overflow: 'hidden',
+            transition: 'all 0.2s ease-in-out',
+          }}
+        >
+          <Box sx={{ p: 1.5, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Typography variant="subtitle2" sx={{ fontWeight: 'bold' }}>📋 腳本</Typography>
+            <IconButton size="small" color="primary" onClick={() => setCreateOpen(true)}>
+              <AddIcon />
+            </IconButton>
+          </Box>
+          <Divider />
+          <List dense sx={{ flex: 1, overflow: 'auto', minHeight: 0, py: 0 }}>
+            {scripts.map((s) => (
+              <ListItemButton
+                key={s.id}
+                selected={selectedId === s.id}
+                onClick={() => setSelectedId(s.id)}
+                sx={{ py: 0.5 }}
+              >
+                <ListItemText
+                  primary={s.name}
+                  secondary={`v${s.version}`}
+                  slotProps={{ primary: { sx: { fontSize: 13 } }, secondary: { sx: { fontSize: 11 } } }}
+                />
+                <IconButton size="small" color="error" onClick={(e) => { e.stopPropagation(); deleteScript(s.id); }}>
+                  <DeleteIcon sx={{ fontSize: 16 }} />
+                </IconButton>
+              </ListItemButton>
+            ))}
+            {scripts.length === 0 && (
+              <Typography sx={{ p: 1.5, textAlign: 'center', color: 'text.secondary', fontSize: 12 }}>
+                尚無腳本
+              </Typography>
+            )}
+          </List>
         </Box>
-        <Divider />
-        <List dense sx={{ maxHeight: 180, overflow: 'auto' }}>
-          {scripts.map((s) => (
-            <ListItemButton key={s.id} selected={selectedId === s.id} onClick={() => setSelectedId(s.id)}
-              sx={{ py: 0.5 }}>
-              <ListItemText primary={s.name} secondary={`v${s.version}`}
-                slotProps={{ primary: { sx: { fontSize: 13 } }, secondary: { sx: { fontSize: 11 } } }} />
-              <IconButton size="small" color="error" onClick={(e) => { e.stopPropagation(); deleteScript(s.id); }}>
-                <DeleteIcon sx={{ fontSize: 16 }} />
-              </IconButton>
-            </ListItemButton>
-          ))}
-          {scripts.length === 0 && (
-            <Typography sx={{ p: 1.5, textAlign: 'center', color: 'text.secondary', fontSize: 12 }}>
-              尚無腳本
-            </Typography>
-          )}
-        </List>
 
-        {/* 模塊工具箱 */}
+        {/* ── 下半部：模塊工具箱 (選中時才顯示，佔 50%) ── */}
         {selected && (
-          <>
-            <Divider />
-            <Box sx={{ p: 1.5 }}>
-              <Typography variant="subtitle2" sx={{ fontWeight: 'bold', mb: 0.5 }}>🧩 模塊工具箱</Typography>
+          <Box
+            sx={{
+              flex: '0 0 50%',
+              height: '50%',
+              display: 'flex',
+              flexDirection: 'column',
+              minHeight: 0,
+              overflow: 'hidden',
+              borderTop: '1px solid',
+              borderColor: 'divider',
+              transition: 'all 0.2s ease-in-out',
+            }}
+          >
+            <Box sx={{ p: 1.5, pb: 1 }}>
+              <Typography variant="subtitle2" sx={{ fontWeight: 'bold' }}>🧩 模塊工具箱</Typography>
             </Box>
-            <Box sx={{ flex: 1, overflow: 'auto' }}>
+            <Box sx={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
               {groupedModules.map((group) => (
-                <Accordion key={group.category} defaultExpanded disableGutters
-                  sx={{ bgcolor: 'transparent', boxShadow: 'none', '&:before': { display: 'none' } }}>
-                  <AccordionSummary expandIcon={<ExpandMoreIcon sx={{ fontSize: 16 }} />}
-                    sx={{ minHeight: 32, '& .MuiAccordionSummary-content': { my: 0 } }}>
+                <Accordion
+                  key={group.category}
+                  defaultExpanded
+                  disableGutters
+                  sx={{ bgcolor: 'transparent', boxShadow: 'none', '&:before': { display: 'none' } }}
+                >
+                  <AccordionSummary
+                    expandIcon={<ExpandMoreIcon sx={{ fontSize: 16 }} />}
+                    sx={{ minHeight: 32, '& .MuiAccordionSummary-content': { my: 0 } }}
+                  >
                     <Typography sx={{ fontSize: 12, fontWeight: 'bold' }}>{group.label}</Typography>
                   </AccordionSummary>
                   <AccordionDetails sx={{ p: 0.5, pt: 0 }}>
@@ -281,7 +330,8 @@ const ScriptEditor = () => {
                       {group.modules.map((m) => (
                         <Tooltip key={m.type} title={m.description} arrow>
                           <Button
-                            size="small" variant="outlined"
+                            size="small"
+                            variant="outlined"
                             onClick={() => addModuleNode(m)}
                             sx={{
                               fontSize: 11, px: 1, py: 0.3, minWidth: 0,
@@ -299,7 +349,7 @@ const ScriptEditor = () => {
                 </Accordion>
               ))}
             </Box>
-          </>
+          </Box>
         )}
       </Paper>
 
