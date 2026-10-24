@@ -9,6 +9,7 @@ import {
 import AddIcon from '@mui/icons-material/Add';
 import SaveIcon from '@mui/icons-material/Save';
 import DeleteIcon from '@mui/icons-material/Delete';
+import EditIcon from '@mui/icons-material/Edit';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import {
   ReactFlow, Controls, Background, MiniMap,
@@ -55,6 +56,11 @@ const ScriptEditor = () => {
   const [createOpen, setCreateOpen] = useState(false);
   const [newName, setNewName] = useState('');
   const [activeTab, setActiveTab] = useState(0);
+
+  // 重新命名腳本狀態
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameTarget, setRenameTarget] = useState<Script | null>(null);
+  const [editName, setEditName] = useState('');
 
   useEffect(() => { fetchScripts(); fetchAssets(); }, [fetchScripts, fetchAssets]);
 
@@ -171,6 +177,52 @@ const ScriptEditor = () => {
     setSelectedNodeId(null);
   };
 
+  // ── 重新命名腳本 ──
+  const handleOpenRename = (script: Script) => {
+    setRenameTarget(script);
+    setEditName(script.name);
+    setRenameOpen(true);
+  };
+
+  const handleConfirmRename = async () => {
+    if (!renameTarget || !editName.trim() || editName.trim() === renameTarget.name) {
+      setRenameOpen(false);
+      return;
+    }
+    const trimmedName = editName.trim();
+    // 若修改的是目前正在編輯的腳本，連同畫布上的最新節點與連線一同存檔
+    if (selected && renameTarget.id === selected.id) {
+      await saveScript({
+        ...selected,
+        name: trimmedName,
+        nodes: nodes.map((n) => ({
+          id: n.id,
+          type: ((n.data as Record<string, unknown>).node_type as ScriptNodeType) ?? 'start',
+          position: n.position,
+          data: (() => {
+            const { node_type: _unused, ...rest } = n.data as Record<string, unknown>;
+            void _unused;
+            return rest;
+          })(),
+        })),
+        edges: edges.map((e) => ({
+          id: e.id,
+          source: e.source,
+          target: e.target,
+          sourceHandle: e.sourceHandle ?? undefined,
+          label: (e.label as string) ?? undefined,
+        })),
+      });
+    } else {
+      await saveScript({
+        ...renameTarget,
+        name: trimmedName,
+      });
+    }
+    setRenameOpen(false);
+    setRenameTarget(null);
+  };
+
   // ── 錄製操作轉換為流程方塊 ──
   const handleApplyRecordedActions = async (
     options: ConvertOptions,
@@ -273,16 +325,38 @@ const ScriptEditor = () => {
                 key={s.id}
                 selected={selectedId === s.id}
                 onClick={() => setSelectedId(s.id)}
-                sx={{ py: 0.5 }}
+                sx={{ py: 0.5, pr: 1 }}
               >
                 <ListItemText
                   primary={s.name}
                   secondary={`v${s.version}`}
                   slotProps={{ primary: { sx: { fontSize: 13 } }, secondary: { sx: { fontSize: 11 } } }}
                 />
-                <IconButton size="small" color="error" onClick={(e) => { e.stopPropagation(); deleteScript(s.id); }}>
-                  <DeleteIcon sx={{ fontSize: 16 }} />
-                </IconButton>
+                <Box sx={{ display: 'flex', gap: 0.5 }}>
+                  <Tooltip title="重新命名" arrow>
+                    <IconButton
+                      size="small"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleOpenRename(s);
+                      }}
+                    >
+                      <EditIcon sx={{ fontSize: 15 }} />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title="刪除腳本" arrow>
+                    <IconButton
+                      size="small"
+                      color="error"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteScript(s.id);
+                      }}
+                    >
+                      <DeleteIcon sx={{ fontSize: 15 }} />
+                    </IconButton>
+                  </Tooltip>
+                </Box>
               </ListItemButton>
             ))}
             {scripts.length === 0 && (
@@ -357,21 +431,42 @@ const ScriptEditor = () => {
       <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
         {selected ? (
           <>
-            {/* Tab 切換 */}
-            <Tabs
-              value={activeTab}
-              onChange={(_, v) => setActiveTab(v)}
+            {/* Tab 切換與當前腳本名稱 */}
+            <Box
               sx={{
-                minHeight: 36,
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
                 borderBottom: '1px solid',
                 borderColor: 'divider',
                 bgcolor: '#0f172a',
-                '& .MuiTab-root': { minHeight: 36, fontSize: 13, py: 0 },
+                pr: 2,
               }}
             >
-              <Tab label="🧩 方塊編輯" />
-              <Tab label="📹 即時錄製" />
-            </Tabs>
+              <Tabs
+                value={activeTab}
+                onChange={(_, v) => setActiveTab(v)}
+                sx={{
+                  minHeight: 36,
+                  '& .MuiTab-root': { minHeight: 36, fontSize: 13, py: 0 },
+                }}
+              >
+                <Tab label="🧩 方塊編輯" />
+                <Tab label="📹 即時錄製" />
+              </Tabs>
+
+              {/* 當前腳本名稱與編輯按鈕 */}
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                <Typography variant="body2" sx={{ fontWeight: 'bold', fontSize: 13, color: 'text.primary' }}>
+                  {selected.name}
+                </Typography>
+                <Tooltip title="修改腳本名稱" arrow>
+                  <IconButton size="small" onClick={() => handleOpenRename(selected)}>
+                    <EditIcon sx={{ fontSize: 14 }} />
+                  </IconButton>
+                </Tooltip>
+              </Box>
+            </Box>
 
             {/* Tab 0: React Flow 編輯器 */}
             <Box
@@ -470,6 +565,32 @@ const ScriptEditor = () => {
         <DialogActions>
           <Button onClick={() => setCreateOpen(false)}>取消</Button>
           <Button variant="contained" onClick={handleCreate}>建立</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* 重新命名腳本對話框 */}
+      <Dialog open={renameOpen} onClose={() => setRenameOpen(false)}>
+        <DialogTitle>重新命名腳本</DialogTitle>
+        <DialogContent>
+          <TextField
+            autoFocus
+            fullWidth
+            label="腳本名稱"
+            value={editName}
+            onChange={(e) => setEditName(e.target.value)}
+            sx={{ mt: 1 }}
+            onKeyDown={(e) => e.key === 'Enter' && handleConfirmRename()}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRenameOpen(false)}>取消</Button>
+          <Button
+            variant="contained"
+            onClick={handleConfirmRename}
+            disabled={!editName.trim() || editName.trim() === renameTarget?.name}
+          >
+            儲存
+          </Button>
         </DialogActions>
       </Dialog>
     </Box>
