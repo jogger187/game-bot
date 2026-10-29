@@ -35,7 +35,7 @@ pub fn init_db() -> rusqlite::Result<Connection> {
     }
 
     let conn = Connection::open(&path)?;
-    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout = 5000;")?;
 
     // 執行建表 SQL
     conn.execute_batch(INIT_SQL)?;
