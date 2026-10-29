@@ -1,18 +1,20 @@
 <!--
 Sync Impact Report:
-- Version change: Initial template -> 1.0.0
+- Version change: 1.0.0 -> 1.1.0
 - List of modified principles:
   - PRINCIPLE_1: I. 三層架構邊界嚴格隔離 (Three-Tier Architecture Isolation)
   - PRINCIPLE_2: II. 雙軌 IPC 契約與協定對齊 (Dual-Track IPC & Protocol Alignment)
   - PRINCIPLE_3: III. 跨進程 SQLite WAL 數據持久化規範 (Cross-Process SQLite WAL Discipline)
   - PRINCIPLE_4: IV. 語意化 Emoji 日誌與錯誤處理邊界 (Structured Semantic Logging & Error Boundaries)
   - PRINCIPLE_5: V. 安全性優先與緊急中斷原則 (Safety-First & Emergency Stop Mechanism)
+  - PRINCIPLE_6: VI. 代碼工程與跨語言防呆規範 (Code Engineering & Cross-Language Guardrails)
 - Added sections:
   - Technical Stack & Quality Standards
   - Development Workflow & Testing Strategy
 - Removed sections: None
 - Follow-up TODOs: None
 -->
+
 
 # Game Bot Constitution
 
@@ -43,6 +45,13 @@ Rust 主進程與 Python 核心共用同一個實體資料庫檔案 (`data/gameb
 - 遊戲自動化涉及模擬點擊與設備輸入，腳本執行器 (`script_runner.py`) 必須支援全域緊急中斷機制（如 ESC 熱鍵與全域中斷 Event）。
 - 自動化點擊動作應具備防封號隨機微調偏移（Anti-detection jitter/random delay），避免機械化定點定時點擊。
 
+### VI. 代碼工程與跨語言防呆規範 (Code Engineering & Cross-Language Guardrails)
+- **前端關注點分離**：UI 組件嚴禁直接呼叫 `@tauri-apps/api` 或 `fetch`，雙軌通訊邏輯必須封裝於統一的 Adapter 層。`@xyflow/react` 自訂節點必須使用 `React.memo` 防止畫布重繪卡頓。
+- **序列化命名統一**：跨語言（TS / Rust / Python）的 JSON Payload 欄位統一採用 `camelCase`（Rust 需配置 `#[serde(rename_all = "camelCase")]`）。
+- **通信通道純淨度**：Python 核心嚴禁使用 `print()` 污染 `stdout` JSON-RPC 通道；Rust 主進程嚴禁對 IPC 與 DB 操作使用 `.unwrap()`，防止主程式 Panic 閃退。
+- **資料庫鎖死防護**：SQLite 連線除開啟 WAL 外，必須強制配置 `PRAGMA busy_timeout = 5000;`。
+- **資源與進程回收**：Tauri 關閉時必須確保連動終止 Python 子進程，防止產生背景孤兒進程。
+
 ## Technical Stack & Quality Standards
 
 - **前端技術棧**：React 19 + TypeScript + Vite + MUI v9 + `@xyflow/react` + Zustand。
@@ -67,4 +76,4 @@ Rust 主進程與 Python 核心共用同一個實體資料庫檔案 (`data/gameb
   - MINOR：新增核心原則或擴充技術標準。
   - PATCH：文字澄清與細微修訂。
 
-**Version**: 1.0.0 | **Ratified**: 2026-10-28 | **Last Amended**: 2026-10-28
+**Version**: 1.1.0 | **Ratified**: 2026-10-28 | **Last Amended**: 2026-10-29
