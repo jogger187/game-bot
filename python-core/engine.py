@@ -168,13 +168,17 @@ class GameEngine:
 
 
 def main():
-    """主迴圈：從 stdin 讀取 JSON-RPC 請求，處理後寫入 stdout"""
+    """主迴圈：從 stdin 讀取 JSON-RPC 請求，處理後寫入專屬 stdout 通道"""
+    # 專屬 JSON-RPC 輸出流，並將全域 sys.stdout 導向 sys.stderr，防止第三方套件 print() 污染 RPC 通道
+    rpc_stdout = sys.stdout
+    sys.stdout = sys.stderr
+
     engine = GameEngine()
 
     # 通知 Tauri 引擎已就緒
     ready_msg = json.dumps({"jsonrpc": "2.0", "method": "engine.ready", "params": {}})
-    sys.stdout.write(ready_msg + "\n")
-    sys.stdout.flush()
+    rpc_stdout.write(ready_msg + "\n")
+    rpc_stdout.flush()
 
     for line in sys.stdin:
         line = line.strip()
@@ -206,8 +210,8 @@ def main():
                 },
             }
 
-        sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
-        sys.stdout.flush()
+        rpc_stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
+        rpc_stdout.flush()
 
 
 if __name__ == "__main__":
