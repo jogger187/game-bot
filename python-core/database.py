@@ -35,6 +35,7 @@ def get_connection() -> sqlite3.Connection:
     conn.execute("PRAGMA wal_autocheckpoint=1000")
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA busy_timeout = 5000")
     return conn
 
 
